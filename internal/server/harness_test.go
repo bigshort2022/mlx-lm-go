@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -65,6 +66,7 @@ type harness struct {
 	tok     *fakeTokenizer
 	tmpl    *fakeTemplater
 	wrap    func(engine.Engine) engine.Engine // if set, the server gets wrap(engine)
+	ui      fs.FS                             // if set, the server serves it as the web UI
 	handler http.Handler
 }
 
@@ -82,7 +84,7 @@ func newHarness(t *testing.T, setup ...func(*harness)) *harness {
 	for _, fn := range setup {
 		fn(h)
 	}
-	deps := Deps{Engine: h.engine, Tokenizer: h.tok, Template: h.tmpl}
+	deps := Deps{Engine: h.engine, Tokenizer: h.tok, Template: h.tmpl, WebUI: h.ui}
 	if h.wrap != nil {
 		deps.Engine = h.wrap(h.engine)
 	}

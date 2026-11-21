@@ -4,6 +4,7 @@ package server
 
 import (
 	"encoding/json"
+	"io/fs"
 
 	"github.com/bigshort2022/mlx-lm-go/internal/engine"
 )
@@ -58,4 +59,5 @@ type Deps struct {
 	Engine    engine.Engine
 	Tokenizer Tokenizer
 	Template  Templater
+	WebUI     fs.FS // nil: no UI is served
 }

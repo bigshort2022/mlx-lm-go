@@ -350,3 +350,41 @@ func TestChatIncludesTextTheDetokenizerHeldBack(t *testing.T) {
 		}
 	})
 }
+
+func TestChatContentRewriteKeepsEveryOtherByteOfTheMessages(t *testing.T) {
+	// Chat templates run tojson over fields such as tool call arguments, so
+	// key order and spacing inside a message are part of the prompt.
+	const before = `[
+  {"role": "assistant", "tool_calls": [{"type": "function", "id": "c1", "function": {"name": "get_weather", "arguments": {"zip": "75001", "city": "Paris", "units": {"temp": "C", "speed": "kmh"}}}}], "content": [{"type": "text", "text": "Calling "}, {"type": "text", "text": "the tool."}], "name": "bot"},
+  {"role" : "tool", "tool_call_id": "c1", "content" : null},
+  {"zeta": 1, "role": "assistant", "alpha": {"b": 1, "a": 2}},
+  { },
+  {"role": "user", "content": "thanks <b>&</b>"}
+]`
+	const after = `[
+  {"role": "assistant", "tool_calls": [{"type": "function", "id": "c1", "function": {"name": "get_weather", "arguments": {"zip": "75001", "city": "Paris", "units": {"temp": "C", "speed": "kmh"}}}}], "content": "Calling the tool.", "name": "bot"},
+  {"role" : "tool", "tool_call_id": "c1", "content" : ""},
+  {"zeta": 1, "role": "assistant", "alpha": {"b": 1, "a": 2},"content":""},
+  { "content":""},
+  {"role": "user", "content": "thanks <b>&</b>"}
+]`
+	h := newHarness(t, scripted("ok"))
+	if got := h.do("POST", "/v1/chat/completions", `{"max_tokens": 4, "messages": `+before+`}`, nil); got.Code != 200 {
+		t.Fatalf("status = %d, want 200: %s", got.Code, got.Body)
+	}
+	if h.tmpl.messages != after {
+		t.Fatalf("template messages =\n%s\nwant\n%s", h.tmpl.messages, after)
+	}
+}
+
+func TestChatMessagesThatNeedNoRewriteKeepTheirBytes(t *testing.T) {
+	const messages = `[ {"role":"system","content":"Be brief."} ,
+		{"content": "hi", "role": "user"} ]`
+	h := newHarness(t, scripted("ok"))
+	if got := h.do("POST", "/v1/chat/completions", `{"messages": `+messages+`}`, nil); got.Code != 200 {
+		t.Fatalf("status = %d, want 200: %s", got.Code, got.Body)
+	}
+	if h.tmpl.messages != messages {
+		t.Fatalf("template messages =\n%s\nwant\n%s", h.tmpl.messages, messages)
+	}
+}

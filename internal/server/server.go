@@ -30,14 +30,17 @@ func New(cfg Config, deps Deps) http.Handler {
 }
 
 // ServeHTTP applies the browser-safety rules and dispatches the request to
-// its route. Anything else is answered like the reference: 404 with the plain
-// text "Not Found".
+// its route, or else to the web UI if there is one. Anything else is answered
+// like the reference: 404 with the plain text "Not Found".
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !s.admit(w, r) {
 		return
 	}
 	handle, ok := s.routes[r.Method+" "+r.URL.Path]
 	if !ok {
+		if s.serveUI(w, r) {
+			return
+		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = io.WriteString(w, "Not Found")
