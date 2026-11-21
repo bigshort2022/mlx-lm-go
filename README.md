@@ -7,14 +7,15 @@ A native Go server for running language models with [MLX](https://github.com/ml-
 This is early software. What works today:
 
 - Models of the `qwen2` family in 4-bit or dense form, for example `mlx-community/Qwen2.5-1.5B-Instruct-4bit`.
+- Text inference for the dense `qwen3_5` family. Tested 4-bit checkpoints: [Qwen3.8-27B](https://huggingface.co/mlx-community/Qwen3.8-27B-4bit) (quality) and [Qwen3.5-9B](https://huggingface.co/mlx-community/Qwen3.5-9B-MLX-4bit) (smaller and faster).
 - `POST /v1/chat/completions` and `POST /v1/completions`, streamed or not, with stop strings, sampling controls, penalties and logit bias.
 - `GET /v1/models`, `GET /health`, and a chat page at `/`.
 
-The Qwen2.5 test fixtures check greedy decoding against mlx-lm 0.32.2 on MLX 0.32.4. End-to-end performance parity has not been established.
+Pinned test cases compare Qwen2.5, Qwen3.5 and Qwen3.8 with mlx-lm 0.32.2 on MLX 0.32.4. See the [Qwen3.8 plan](docs/superpowers/plans/2026-11-21-m6a-qwen38.md) for the tested revisions and results.
 
 Not there yet:
 
-- Other architectures. `qwen3_5` is next.
+- Sparse `qwen3_5_moe`, other architectures, and image or video input.
 - A prompt cache. Every request processes its whole prompt, so the first token of a follow-up turn arrives later than with Python.
 - Tool calls, `logprobs`, adapters, speculative decoding, batching, distributed inference, and model downloads.
 - Linux and CUDA.
@@ -56,6 +57,17 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 
 For clients using the chat or text completions API, set `base_url` to `http://127.0.0.1:8080/v1`.
 
+Run the flagship checkpoint at the tested revision. `hf download` prints its local snapshot directory:
+
+```sh
+snapshot=$(hf download mlx-community/Qwen3.8-27B-4bit --quiet \
+  --revision 10c35caafbb80f7dc6a7a432cdd11af10a6d4818)
+bin/mlx-lm-go server --model "$snapshot" \
+  --chat-template-args '{"enable_thinking":false}'
+```
+
+Omit `--chat-template-args` to use the checkpoint's default. The chat API sends reasoning separately as `message.reasoning` or `delta.reasoning`, not in `content`. A chat request can override the server's template settings with `chat_template_kwargs`.
+
 Generate once from the command line:
 
 ```sh
@@ -96,7 +108,13 @@ make test-race
 make vet
 ```
 
-Tests compare this code with recordings of the Python implementation under `testdata/`: tokenizer output, rendered chat templates, layer activations, logits, sampled tokens and HTTP exchanges. `make fixtures` regenerates them; see the comments in the `Makefile` for the Python environments it expects. Numeric fixtures must come from the same MLX version the binary links, because GPU kernels change between releases.
+Tests compare against Python recordings under `testdata/`: tokenization, rendered prompts, layer activations, logits, sampled tokens and HTTP exchanges. Use `make fixtures` for the original fixtures and `tools/oracle/make_qwen38_model_fixtures.py` for the pinned Qwen3 fixtures. Run the Qwen3 tests below with both snapshots cached and the same MLX version used to record the goldens:
+
+```sh
+HF_HUB_OFFLINE=1 MLX_LM_GO_TEST_QWEN38=1 go test -p 1 \
+  ./internal/models/qwen3_5 ./internal/generate ./cmd/mlx-lm-go \
+  -run '^TestQwen(35|38)(DecoderParity|GenerationParity|Binary)$' -count=1
+```
 
 The design and the plans the code was built from are in `docs/superpowers/plans/`.
 

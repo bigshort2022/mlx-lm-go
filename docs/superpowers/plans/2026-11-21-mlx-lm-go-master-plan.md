@@ -328,7 +328,7 @@ Adapters (LoRA), speculative decoding, batching, distributed inference (`mlx.lau
 | M3 `qwen2` generation | done, reviewed, review fixes in. Greedy-decoding fixtures match mlx-lm 0.32.2 on MLX 0.32.4. |
 | M4 HTTP server and the binary | done, reviewed. Not yet attached to mlx-fleet as a slot. |
 | M5 front end | page and standalone build done in the unite4ai repository, on a local branch that is not pushed or deployed. The UI is embedded in the binary. Browser checks so far: headless Chromium only, against loopback pages. |
-| M6a dense Qwen3.8 and Qwen3.5 text | implementing: pinned Python reference runs both; Go support is not verified yet |
+| M6a dense Qwen3.8 and Qwen3.5 text | done on `feat/qwen38`: both pinned checkpoints pass native CLI, HTTP and Python oracle gates; [results](2026-11-21-m6a-qwen38.md#verified-closeout) |
 | M6b prompt prefix cache, tools, logprobs, fleet gate | not started |
 | M7 launch | not started, except a README |
 
