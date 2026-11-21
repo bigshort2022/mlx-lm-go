@@ -215,3 +215,31 @@ func TestRopeScalingRejectsTheTypesNotPorted(t *testing.T) {
 		}
 	})
 }
+
+func TestVocabSizeIsTheNumberOfEmbeddings(t *testing.T) {
+	inScope(t, func() {
+		model, err := New(config(tinyConfig), tinyWeights())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := model.(*Model).VocabSize(); got != 10 {
+			t.Errorf("VocabSize() = %d, want 10", got)
+		}
+	})
+}
+
+func TestFreeReleasesEveryWeight(t *testing.T) {
+	inScope(t, func() {
+		weights := tinyWeights()
+		model, err := New(config(tinyConfig), weights)
+		if err != nil {
+			t.Fatal(err)
+		}
+		model.(*Model).Free()
+		for name, a := range weights {
+			if a.Valid() {
+				t.Errorf("Free left %s alive", name)
+			}
+		}
+	})
+}

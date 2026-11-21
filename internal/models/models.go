@@ -14,6 +14,11 @@ import (
 )
 
 // Model is a loaded language model. All methods must be called on the inference thread.
+//
+// A model should also implement VocabSize() int, the number of tokens it
+// knows, and Free(), which releases its weights: package generate uses the
+// first to reject prompt tokens outside the vocabulary and the second when an
+// engine is closed. A model without them is not checked and not freed.
 type Model interface {
 	// Forward returns logits of shape [1, L, vocab] for tokens of shape [1, L],
 	// reading and extending state. A nil state means no cache: the tokens are

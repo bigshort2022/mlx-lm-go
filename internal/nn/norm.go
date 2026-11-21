@@ -9,9 +9,12 @@ type RMSNorm struct {
 	eps    float32
 }
 
-// RMSNorm returns the normalisation layer at path.
-func (l *Loader) RMSNorm(path string, eps float32) *RMSNorm {
-	return &RMSNorm{weight: l.tensor(path + ".weight"), eps: eps}
+// RMSNorm returns the normalisation layer at path for vectors of dims
+// features.
+func (l *Loader) RMSNorm(path string, dims int, eps float32) *RMSNorm {
+	weight := l.tensor(path + ".weight")
+	l.wantShape(path+".weight", weight, dims)
+	return &RMSNorm{weight: weight, eps: eps}
 }
 
 // Forward returns x normalised.

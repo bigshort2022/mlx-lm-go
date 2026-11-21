@@ -8,12 +8,13 @@ type Linear struct {
 	bias   *mlx.Array // nil for a layer without bias
 }
 
-// Linear returns the linear layer at path, which takes inDims features and
-// has a bias term or not.
-func (l *Loader) Linear(path string, inDims int, bias bool) *Linear {
-	linear := &Linear{weight: l.matrix(path, inDims)}
+// Linear returns the linear layer at path, which maps inDims features to
+// outDims and has a bias term or not.
+func (l *Loader) Linear(path string, inDims, outDims int, bias bool) *Linear {
+	linear := &Linear{weight: l.matrix(path, outDims, inDims)}
 	if bias {
 		linear.bias = l.tensor(path + ".bias")
+		l.wantShape(path+".bias", linear.bias, outDims)
 	}
 	return linear
 }

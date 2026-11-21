@@ -8,10 +8,15 @@ type Embedding struct {
 	table matrix // one row per token
 }
 
-// Embedding returns the embedding layer at path, whose vectors have dims
-// features.
-func (l *Loader) Embedding(path string, dims int) *Embedding {
-	return &Embedding{table: l.matrix(path, dims)}
+// Embedding returns the embedding layer at path, which has a vector of dims
+// features for each of numEmbeddings tokens.
+func (l *Loader) Embedding(path string, numEmbeddings, dims int) *Embedding {
+	return &Embedding{table: l.matrix(path, numEmbeddings, dims)}
+}
+
+// NumEmbeddings returns the number of tokens the layer has vectors for.
+func (e *Embedding) NumEmbeddings() int {
+	return e.table.weight.Dim(0)
 }
 
 // Forward returns the vectors of the token ids x, in a new last dimension.

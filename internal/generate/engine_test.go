@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -17,18 +18,15 @@ import (
 	"github.com/bigshort2022/mlx-lm-go/mlx"
 )
 
-// The tests share one engine, loaded by the first test that needs it.
-var (
-	loadOnce  sync.Once
-	reference *Engine
-	loadErr   error
-)
+// The tests share one engine, loaded by the first test that needs it. Only
+// one engine can be open in a process: a test that loads its own calls
+// closeReference first, and the next test that needs the shared one loads it
+// again.
+var reference *Engine
 
 func TestMain(m *testing.M) {
 	code := m.Run()
-	if reference != nil {
-		reference.Close()
-	}
+	closeReference()
 	os.Exit(code)
 }
 
@@ -36,12 +34,22 @@ func TestMain(m *testing.M) {
 // test when the model is not on this machine.
 func referenceEngine(t *testing.T) *Engine {
 	t.Helper()
-	dir := modeltest.Dir(t)
-	loadOnce.Do(func() { reference, loadErr = Load(dir, Options{}) })
-	if loadErr != nil {
-		t.Fatal(loadErr)
+	if reference == nil {
+		e, err := Load(modeltest.Dir(t), Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		reference = e
 	}
 	return reference
+}
+
+// closeReference closes the shared engine if it is open.
+func closeReference() {
+	if reference != nil {
+		reference.Close()
+		reference = nil
+	}
 }
 
 // greedy is the request for the greedy continuation of prompt.
@@ -105,8 +113,52 @@ func TestGenerateGreedyMatchesGolden(t *testing.T) {
 }
 
 func TestLoadReportsAMissingModel(t *testing.T) {
+	closeReference()
 	if _, err := Load(t.TempDir(), Options{}); err == nil || !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("Load of an empty directory: error = %v, want one about the missing config.json", err)
+	}
+	// The failed Load leaves no engine open.
+	e, err := Load(modeltest.WriteModel(t, modeltest.TinyConfig(), modeltest.TinyDense()), Options{})
+	if err != nil {
+		t.Fatalf("Load after a failed Load: %v", err)
+	}
+	e.Close()
+}
+
+// The scopes of package mlx are process-wide: two engines generating at the
+// same time would free each other's arrays. Close, then Load, swaps models.
+func TestLoadFailsWhileAnotherEngineIsOpen(t *testing.T) {
+	e := referenceEngine(t)
+	cases, eos := modeltest.Generation(t)
+	c := cases[0]
+	want := c.GreedyIDs[:len(c.GreedyIDs)-1]
+	if !c.EndsWithEOS(eos) {
+		t.Fatal("case 0 does not end with an end-of-sequence token")
+	}
+
+	tiny := modeltest.WriteModel(t, modeltest.TinyConfig(), modeltest.TinyDense())
+	for range 2 {
+		second, err := Load(tiny, Options{})
+		if err == nil {
+			second.Close()
+			t.Fatal("Load succeeded while another engine is open")
+		}
+		if got, want := err.Error(), "generate: an engine is already open; close it first"; got != want {
+			t.Errorf("Load while another engine is open: error = %q, want %q", got, want)
+		}
+	}
+	if tokens, _ := generate(t, e, greedy(c.PromptIDs, 64)); !slices.Equal(tokens, want) {
+		t.Errorf("after the refused Load the open engine emitted %v, want %v", tokens, want)
+	}
+
+	closeReference()
+	other, err := Load(tiny, Options{})
+	if err != nil {
+		t.Fatalf("Load after Close: %v", err)
+	}
+	other.Close()
+	if tokens, _ := generate(t, referenceEngine(t), greedy(c.PromptIDs, 64)); !slices.Equal(tokens, want) {
+		t.Errorf("the engine loaded after Close emitted %v, want %v", tokens, want)
 	}
 }
 
@@ -165,9 +217,21 @@ func TestMaxTokensCountsTheEndOfSequenceToken(t *testing.T) {
 // withPrefillStepSize returns an engine that shares the model and the thread
 // of e but feeds the prompt in steps of n tokens.
 func withPrefillStepSize(e *Engine, n int) *Engine {
-	stepped := *e
-	stepped.prefillStepSize = n
-	return &stepped
+	return &Engine{thread: e.thread, model: e.model, vocab: e.vocab, eos: e.eos, prefillStepSize: n}
+}
+
+// countingModel counts the forward passes of the model it wraps and calls
+// onForward at the start of each with its number, from 1.
+type countingModel struct {
+	models.Model
+	forwards  int
+	onForward func(n int)
+}
+
+func (m *countingModel) Forward(tokens *mlx.Array, state models.State) *mlx.Array {
+	m.forwards++
+	m.onForward(m.forwards)
+	return m.Model.Forward(tokens, state)
 }
 
 func TestGeneratePrefillStepSizeDoesNotChangeOutput(t *testing.T) {
@@ -533,4 +597,271 @@ func TestGenerateAfterCloseFails(t *testing.T) {
 	if !errors.Is(err, exec.ErrClosed) {
 		t.Errorf("Generate after Close returned %v, want exec.ErrClosed", err)
 	}
+}
+
+// MLX does not check indices: a token outside the vocabulary would be read
+// from outside the embedding table and, with a penalty, written outside the
+// logits.
+func TestGenerateRejectsPromptTokensOutsideTheVocabulary(t *testing.T) {
+	e := referenceEngine(t)
+	cases, _ := modeltest.Generation(t)
+	valid := cases[1].PromptIDs
+	for _, id := range []int32{151936, 2147483647, -1, -151937, -2147483648} {
+		for _, position := range []int{0, 5, len(valid) - 1} {
+			for name, sampling := range map[string]engine.Sampling{
+				"greedy":       {},
+				"with penalty": {RepetitionPenalty: 1.2, RepetitionContextSize: 20},
+			} {
+				prompt := slices.Clone(valid)
+				prompt[position] = id
+				req := engine.Request{Prompt: prompt, MaxTokens: 4, Sampling: sampling}
+				res, err := e.Generate(context.Background(), req, func(int32) { t.Error("emit was called") })
+				if err == nil || !strings.Contains(err.Error(), strconv.Itoa(int(id))) ||
+					!strings.Contains(err.Error(), "position "+strconv.Itoa(position)) || !strings.Contains(err.Error(), "151936") {
+					t.Errorf("token %d at position %d, %s: error = %v, want one naming the token, its position and the vocabulary size",
+						id, position, name, err)
+				}
+				if want := (engine.Result{PromptTokens: len(prompt)}); res != want {
+					t.Errorf("token %d at position %d, %s: result is %+v, want %+v", id, position, name, res, want)
+				}
+			}
+		}
+	}
+	// The last token of the vocabulary is a valid prompt, and the engine
+	// still works.
+	if _, err := e.Generate(context.Background(), greedy([]int32{0, 151935}, 1), func(int32) {}); err != nil {
+		t.Errorf("a prompt of the first and the last token of the vocabulary: %v", err)
+	}
+	tokens, _ := generate(t, e, greedy(valid, 64))
+	if want := cases[1].GreedyIDs[:len(cases[1].GreedyIDs)-1]; !slices.Equal(tokens, want) {
+		t.Errorf("after the rejected prompts the engine emitted %v, want %v", tokens, want)
+	}
+}
+
+// When emit panics, the token after the one it was given is already being
+// computed. It must be freed with the rest of the generation.
+func TestGenerateFreesTheTokenInFlightWhenEmitPanics(t *testing.T) {
+	e := referenceEngine(t)
+	cases, _ := modeltest.Generation(t)
+	c := cases[4]
+	generate(t, e, greedy(c.PromptIDs, 4))
+	before := settledMemory(t, e)
+
+	for range 50 {
+		_, err := e.Generate(context.Background(), greedy(c.PromptIDs, 8), func(int32) { panic("boom") })
+		var panicked *exec.PanicError
+		if !errors.As(err, &panicked) || panicked.Value != "boom" {
+			t.Fatalf("Generate returned %v, want the panic of emit", err)
+		}
+	}
+
+	if after := settledMemory(t, e); after != before {
+		t.Errorf("50 generations whose emit panicked left %d bytes behind", int64(after)-int64(before))
+	}
+	tokens, _ := generate(t, e, greedy(c.PromptIDs, 8))
+	if !slices.Equal(tokens, c.GreedyIDs[:8]) {
+		t.Errorf("after the panics the engine emitted %v, want %v", tokens, c.GreedyIDs[:8])
+	}
+}
+
+// One evaluation cannot be interrupted: while the prompt is fed, a
+// cancellation takes effect at the end of the prefill step under way.
+func TestGenerateStopsAtTheNextPrefillStepWhenCancelled(t *testing.T) {
+	e := referenceEngine(t)
+	if e.prefillStepSize != 2048 {
+		t.Fatalf("the prefill step size is %d, want the default 2048", e.prefillStepSize)
+	}
+	cases, _ := modeltest.Generation(t)
+	// Three prefill steps and the token the first sample starts from.
+	prompt := slices.Repeat(cases[0].PromptIDs, 3*2048/len(cases[0].PromptIDs)+1)[:3*2048+1]
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	counting := &countingModel{Model: e.model, onForward: func(n int) {
+		if n == 1 {
+			cancel() // during the first step
+		}
+	}}
+	counted := &Engine{thread: e.thread, model: counting, vocab: e.vocab, eos: e.eos, prefillStepSize: e.prefillStepSize}
+	res, err := counted.Generate(ctx, greedy(prompt, 4), func(int32) { t.Error("emit was called") })
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Generate returned %v, want context.Canceled", err)
+	}
+	if counting.forwards != 1 {
+		t.Errorf("%d prefill steps ran after the cancellation during the first, want only the first", counting.forwards)
+	}
+	if want := (engine.Result{PromptTokens: len(prompt)}); res != want {
+		t.Errorf("the result is %+v, want %+v", res, want)
+	}
+}
+
+// activeMemory returns MLX's active memory. It is for tests that have no
+// engine open: nothing else may use MLX meanwhile.
+func activeMemory(t *testing.T) uint64 {
+	t.Helper()
+	modeltest.Pin(t)
+	return mlx.ActiveMemory()
+}
+
+func TestCloseFreesTheModel(t *testing.T) {
+	const mib = 1 << 20
+	dir := modeltest.Dir(t)
+	closeReference()
+	before := activeMemory(t)
+	for cycle := range 3 {
+		e, err := Load(dir, Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		loaded := activeMemory(t)
+		e.Close()
+		after := activeMemory(t)
+		t.Logf("cycle %d: active memory %d bytes before Load, %d loaded, %d after Close", cycle, before, loaded, after)
+		if loaded < before+500*mib {
+			t.Errorf("cycle %d: the loaded model holds %d bytes, want hundreds of MiB", cycle, int64(loaded)-int64(before))
+		}
+		if diff := int64(after) - int64(before); diff > mib || diff < -mib {
+			t.Fatalf("cycle %d: active memory after Close is %d bytes off the level before Load, want within 1 MiB", cycle, diff)
+		}
+	}
+}
+
+func TestCloseTwiceIsHarmless(t *testing.T) {
+	closeReference()
+	e, err := Load(modeltest.WriteModel(t, modeltest.TinyConfig(), modeltest.TinyDense()), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.Close()
+	e.Close()
+	if _, err := e.Generate(context.Background(), greedy([]int32{1}, 1), func(int32) { t.Error("emit was called") }); !errors.Is(err, exec.ErrClosed) {
+		t.Errorf("Generate after Close returned %v, want exec.ErrClosed", err)
+	}
+}
+
+// Close lets the generation in progress finish and fails those that wait
+// behind it, which must not run on the freed model.
+func TestCloseFinishesTheRunningGenerationAndFailsTheQueued(t *testing.T) {
+	e := referenceEngine(t)
+	reference = nil // closed below
+	cases, _ := modeltest.Generation(t)
+	c := cases[4]
+
+	started := make(chan struct{})
+	var wg sync.WaitGroup
+	var running []int32
+	var runningErr, queuedErr error
+	wg.Go(func() {
+		_, runningErr = e.Generate(context.Background(), greedy(c.PromptIDs, 64), func(token int32) {
+			if len(running) == 0 {
+				close(started)
+			}
+			running = append(running, token)
+		})
+	})
+	<-started
+	wg.Go(func() {
+		_, queuedErr = e.Generate(context.Background(), greedy(c.PromptIDs, 64), func(int32) { t.Error("the queued generation emitted a token") })
+	})
+	time.Sleep(20 * time.Millisecond) // lets the second call queue up; it must fail either way
+	e.Close()
+	wg.Wait()
+
+	if runningErr != nil || !slices.Equal(running, c.GreedyIDs) {
+		t.Errorf("the generation in progress returned %v after %v, want all of %v", runningErr, running, c.GreedyIDs)
+	}
+	if !errors.Is(queuedErr, exec.ErrClosed) {
+		t.Errorf("the queued generation returned %v, want exec.ErrClosed", queuedErr)
+	}
+}
+
+// tinyEngine closes the shared engine and loads a tiny model written for
+// this test. The engine is closed when the test ends.
+func tinyEngine(t *testing.T, config map[string]any, tensors map[string]modeltest.Tensor) *Engine {
+	t.Helper()
+	closeReference()
+	e, err := Load(modeltest.WriteModel(t, config, tensors), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(e.Close)
+	return e
+}
+
+// Expected tokens come from generate_step of mlx-lm 0.32.2 on the same model
+// directories, loaded with mlx_lm.utils.load_model: greedy with prefill steps
+// of 2048 and of 3,
+// make_logits_processors(repetition_penalty=1.5, repetition_context_size=20),
+// and mx.random.seed(11) with make_sampler(temp=1.0, top_p=0.9, top_k=10).
+// Token 31 ends a generation.
+func TestTinyModelsMatchReference(t *testing.T) {
+	prompt := []int32{1, 5, 9, 2, 30, 7, 7, 0}
+	seed := uint64(11)
+	tests := []struct {
+		name                  string
+		config                map[string]any
+		tensors               map[string]modeltest.Tensor
+		greedy, rep, sampled  []int32
+		greedyEnds, sampleEnd bool // whether the reference sampled token 31 after them
+	}{
+		{"dense", modeltest.TinyConfig(), modeltest.TinyDense(),
+			[]int32{30, 29, 13, 25, 4, 0, 30, 29, 23, 25},
+			[]int32{30, 29, 13, 25, 4, 14, 27, 27, 27, 23, 20, 14, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27},
+			[]int32{30, 23, 13, 8, 7, 20, 14, 29, 27, 27, 29, 23, 8},
+			true, true},
+		{"quantized", modeltest.TinyQuantizedConfig(), modeltest.TinyQuantized(),
+			[]int32{29, 23, 1, 23, 1, 23, 1, 23, 1, 23, 1, 23, 1, 15, 29, 23, 1, 23, 1, 23, 1, 23, 1, 23},
+			[]int32{29, 23, 1, 15, 12, 29, 23, 27, 23, 1, 23, 1, 23, 1, 23, 1, 23, 1, 23, 7, 14, 15, 29, 13},
+			[]int32{22, 23, 1, 12, 15, 25, 12, 27, 25, 14, 29, 15, 4, 29, 22, 15, 3, 12, 7, 25, 12, 29, 25, 29},
+			false, false},
+	}
+	reason := func(ends bool) string {
+		if ends {
+			return "stop"
+		}
+		return "length"
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := tinyEngine(t, tt.config, tt.tensors)
+			if e.vocab != modeltest.TinyVocabSize {
+				t.Errorf("the engine knows %d tokens, want the %d rows of the embedding", e.vocab, modeltest.TinyVocabSize)
+			}
+			for name, c := range map[string]struct {
+				engine     *Engine
+				sampling   engine.Sampling
+				want       []int32
+				wantReason string
+			}{
+				"greedy":              {e, engine.Sampling{}, tt.greedy, reason(tt.greedyEnds)},
+				"greedy, prefill 3":   {withPrefillStepSize(e, 3), engine.Sampling{}, tt.greedy, reason(tt.greedyEnds)},
+				"repetition penalty":  {e, engine.Sampling{RepetitionPenalty: 1.5, RepetitionContextSize: 20}, tt.rep, "length"},
+				"seeded, top-p and k": {e, engine.Sampling{Temperature: 1, TopP: 0.9, TopK: 10, Seed: &seed}, tt.sampled, reason(tt.sampleEnd)},
+			} {
+				tokens, res := generate(t, c.engine, engine.Request{Prompt: prompt, MaxTokens: 24, Sampling: c.sampling})
+				if !slices.Equal(tokens, c.want) || res.FinishReason != c.wantReason {
+					t.Errorf("%s: emitted %v and finished %q, want %v and %q", name, tokens, res.FinishReason, c.want, c.wantReason)
+				}
+			}
+			// The vocabulary is the embedding's: token 32 is one past its end.
+			_, err := e.Generate(context.Background(), greedy([]int32{1, modeltest.TinyVocabSize}, 2), func(int32) {})
+			if err == nil || !strings.Contains(err.Error(), "prompt token 32 at position 1 is outside the vocabulary of 32 tokens") {
+				t.Errorf("a prompt with token 32: error = %v, want it rejected as outside the vocabulary", err)
+			}
+		})
+	}
+}
+
+// A model whose tensors do not fit its config.json must not load, and the
+// failed Load must leave the way free for the next one.
+func TestLoadRejectsAModelOfTheWrongShape(t *testing.T) {
+	closeReference()
+	tensors := modeltest.TinyDense()
+	tensors["model.layers.0.mlp.gate_proj.weight"] = modeltest.Zeros("F32", 64, 64)
+	_, err := Load(modeltest.WriteModel(t, modeltest.TinyConfig(), tensors), Options{})
+	want := `tensor "model.layers.0.mlp.gate_proj.weight" has shape [64 64], want [128 64]`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("Load error = %v, want one saying: %s", err, want)
+	}
+	tinyEngine(t, modeltest.TinyConfig(), modeltest.TinyDense())
 }

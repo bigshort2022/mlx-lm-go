@@ -12,8 +12,11 @@ import (
 // a newer MLX than the one that made the fixtures.
 const layerTolerance = 2e-2
 
-// hiddenSize is the width of the reference model.
-const hiddenSize = 1536
+// The dimensions of the reference model.
+const (
+	hiddenSize = 1536
+	vocabSize  = 151936
+)
 
 // referenceLoader returns a Loader over the weights of the reference model.
 func referenceLoader(t *testing.T) *Loader {
@@ -52,7 +55,7 @@ func TestQuantizedEmbeddingMatchesGolden(t *testing.T) {
 	inScope(t, func() {
 		loader := referenceLoader(t)
 		golden := modeltest.Layers(t)
-		embedding := loader.Embedding("model.embed_tokens", hiddenSize)
+		embedding := loader.Embedding("model.embed_tokens", vocabSize, hiddenSize)
 		if err := loader.Err(); err != nil {
 			t.Fatal(err)
 		}
@@ -68,7 +71,7 @@ func TestRMSNormMatchesGolden(t *testing.T) {
 	inScope(t, func() {
 		loader := referenceLoader(t)
 		golden := modeltest.Layers(t)
-		norm := loader.RMSNorm("model.layers.0.input_layernorm", 1e-6)
+		norm := loader.RMSNorm("model.layers.0.input_layernorm", hiddenSize, 1e-6)
 		if err := loader.Err(); err != nil {
 			t.Fatal(err)
 		}
@@ -117,9 +120,9 @@ func TestQuantizedLinearEqualsDenseOnDequantizedWeights(t *testing.T) {
 				weights := modeltest.Weights(t)
 				golden := modeltest.Layers(t)
 				loader := NewLoader(weights)
-				quantized := loader.Linear(tt.path, hiddenSize, tt.bias)
+				quantized := loader.Linear(tt.path, hiddenSize, hiddenSize, tt.bias)
 				denseLoader := NewLoader(dequantized(weights, tt.path))
-				dense := denseLoader.Linear(tt.path, hiddenSize, tt.bias)
+				dense := denseLoader.Linear(tt.path, hiddenSize, hiddenSize, tt.bias)
 				if err := errors.Join(loader.Err(), denseLoader.Err()); err != nil {
 					t.Fatal(err)
 				}
@@ -135,8 +138,8 @@ func TestQuantizedEmbeddingAsLinearEqualsDenseOnDequantizedWeights(t *testing.T)
 		weights := modeltest.Weights(t)
 		golden := modeltest.Layers(t)
 		const path = "model.embed_tokens"
-		quantized := NewLoader(weights).Embedding(path, hiddenSize)
-		dense := NewLoader(dequantized(weights, path)).Embedding(path, hiddenSize)
+		quantized := NewLoader(weights).Embedding(path, vocabSize, hiddenSize)
+		dense := NewLoader(dequantized(weights, path)).Embedding(path, vocabSize, hiddenSize)
 		x := half(golden["final_norm"])
 		wantSame(t, "as_linear", quantized.AsLinear(x), dense.AsLinear(x))
 	})

@@ -3,6 +3,7 @@ package mlx
 import (
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -55,11 +56,59 @@ func TestSwiGLUEqualsItsUnfusedDefinition(t *testing.T) {
 	})
 }
 
+// The compiled function does not check shapes itself: once it has seen a
+// rank, it takes any two shapes of that rank and reads past the smaller one.
+// SwiGLU must reject what Multiply rejects, with the same message.
 func TestSwiGLUPanicsOnShapesThatDoNotBroadcast(t *testing.T) {
+	for _, pair := range [][2][]int{
+		{{1, 6, 64}, {1, 6, 128}},
+		{{2, 3}, {2, 4}},
+		{{2, 3}, {3, 3}},
+		{{4, 5}, {2, 3}},
+		{{2, 3}, {4}},
+	} {
+		inScope(t, func() {
+			gate, x := Zeros(Float32, pair[0]...), Zeros(Float32, pair[1]...)
+			// Let the compiled function see the rank with shapes that match.
+			SwiGLU(gate, gate)
+			SwiGLU(x, x)
+			want := mustPanic(t, func() { Multiply(gate, x) })
+			got := mustPanic(t, func() { SwiGLU(gate, x) })
+			// mlx-c appends where in its source the error was raised.
+			if got == nil || want == nil || !strings.HasPrefix(want.Msg, got.Msg) || !strings.HasPrefix(got.Msg, "[broadcast_shapes]") {
+				t.Errorf("SwiGLU(%v, %v) panicked with %v, want the error of Multiply: %v", pair[0], pair[1], got, want)
+			}
+		})
+	}
 	inScope(t, func() {
-		mustPanic(t, func() { SwiGLU(Zeros(Float32, 2, 3), Zeros(Float32, 4)) })
 		// and keeps working afterwards
 		wantFloats(t, "swiglu after a failure", SwiGLU(Float(1), Float(2)), []int{}, []float32{1.4621172}, 1e-6)
+	})
+}
+
+// Expected values: gate * sigmoid(gate) * x with the same broadcasting.
+func TestSwiGLUBroadcasts(t *testing.T) {
+	inScope(t, func() {
+		column := FromFloat32([]float32{1, 3}, 2, 1)
+		row := FromFloat32([]float32{1, 2, -5}, 1, 3)
+		SwiGLU(Zeros(Float32, 2, 3), Zeros(Float32, 2, 3)) // the rank is traced without broadcasting
+		for name, c := range map[string]struct {
+			gate, x *Array
+			shape   []int
+		}{
+			"[2,1] with [1,3]": {column, row, []int{2, 3}},
+			"[1,3] with [2,1]": {row, column, []int{2, 3}},
+			"[2,1] with [3]":   {column, FromFloat32([]float32{1, 2, -5}, 3), []int{2, 3}},
+			"[] with [1,3]":    {Float(3), row, []int{1, 3}},
+			"[2,1] with []":    {column, Float(2), []int{2, 1}},
+			"[2,3] with [1,3]": {Add(column, Zeros(Float32, 2, 3)), row, []int{2, 3}},
+		} {
+			want := Multiply(Multiply(c.gate, Sigmoid(c.gate)), c.x)
+			got := SwiGLU(c.gate, c.x)
+			if !slices.Equal(got.Shape(), c.shape) || !slices.Equal(got.Float32s(), want.Float32s()) {
+				t.Errorf("swiglu(%s) = %v %v, want %v %v", name, got.Shape(), got.Float32s(), c.shape, want.Float32s())
+			}
+		}
 	})
 }
 

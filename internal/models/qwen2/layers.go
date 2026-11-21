@@ -24,10 +24,10 @@ func newAttention(l *nn.Loader, path string, args *modelArgs) *attention {
 		nHeads:   args.NumAttentionHeads,
 		nKVHeads: args.NumKeyValueHeads,
 		scale:    float32(1 / math.Sqrt(float64(headDim))),
-		qProj:    l.Linear(path+".q_proj", dim, true),
-		kProj:    l.Linear(path+".k_proj", dim, true),
-		vProj:    l.Linear(path+".v_proj", dim, true),
-		oProj:    l.Linear(path+".o_proj", args.NumAttentionHeads*headDim, false),
+		qProj:    l.Linear(path+".q_proj", dim, args.NumAttentionHeads*headDim, true),
+		kProj:    l.Linear(path+".k_proj", dim, args.NumKeyValueHeads*headDim, true),
+		vProj:    l.Linear(path+".v_proj", dim, args.NumKeyValueHeads*headDim, true),
+		oProj:    l.Linear(path+".o_proj", args.NumAttentionHeads*headDim, dim, false),
 		rope:     args.rope(headDim),
 	}
 }
@@ -66,9 +66,9 @@ type mlp struct {
 func newMLP(l *nn.Loader, path string, args *modelArgs) *mlp {
 	dim, hiddenDim := args.HiddenSize, args.IntermediateSize
 	return &mlp{
-		gateProj: l.Linear(path+".gate_proj", dim, false),
-		downProj: l.Linear(path+".down_proj", hiddenDim, false),
-		upProj:   l.Linear(path+".up_proj", dim, false),
+		gateProj: l.Linear(path+".gate_proj", dim, hiddenDim, false),
+		downProj: l.Linear(path+".down_proj", hiddenDim, dim, false),
+		upProj:   l.Linear(path+".up_proj", dim, hiddenDim, false),
 	}
 }
 
@@ -89,8 +89,8 @@ func newTransformerBlock(l *nn.Loader, path string, args *modelArgs) *transforme
 	return &transformerBlock{
 		selfAttn:               newAttention(l, path+".self_attn", args),
 		mlp:                    newMLP(l, path+".mlp", args),
-		inputLayernorm:         l.RMSNorm(path+".input_layernorm", args.RMSNormEps),
-		postAttentionLayernorm: l.RMSNorm(path+".post_attention_layernorm", args.RMSNormEps),
+		inputLayernorm:         l.RMSNorm(path+".input_layernorm", args.HiddenSize, args.RMSNormEps),
+		postAttentionLayernorm: l.RMSNorm(path+".post_attention_layernorm", args.HiddenSize, args.RMSNormEps),
 	}
 }
 

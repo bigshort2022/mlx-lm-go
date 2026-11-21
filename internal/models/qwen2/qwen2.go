@@ -19,6 +19,8 @@ func init() {
 
 // Model is a Qwen2 language model.
 type Model struct {
+	weights map[string]*mlx.Array // every tensor of the model, by name
+
 	embedTokens *nn.Embedding
 	layers      []*transformerBlock
 	norm        *nn.RMSNorm
@@ -49,15 +51,16 @@ func build(cfg models.Config, weights map[string]*mlx.Array) (*Model, error) {
 
 	l := nn.NewLoader(weights)
 	m := &Model{
-		embedTokens: l.Embedding("model.embed_tokens", args.HiddenSize),
+		weights:     weights,
+		embedTokens: l.Embedding("model.embed_tokens", args.VocabSize, args.HiddenSize),
 		layers:      make([]*transformerBlock, args.NumHiddenLayers),
-		norm:        l.RMSNorm("model.norm", args.RMSNormEps),
+		norm:        l.RMSNorm("model.norm", args.HiddenSize, args.RMSNormEps),
 	}
 	for i := range m.layers {
 		m.layers[i] = newTransformerBlock(l, "model.layers."+strconv.Itoa(i), args)
 	}
 	if !args.TieWordEmbeddings {
-		m.lmHead = l.Linear("lm_head", args.HiddenSize, false)
+		m.lmHead = l.Linear("lm_head", args.HiddenSize, args.VocabSize, false)
 	}
 	if err := l.Err(); err != nil {
 		return nil, err
@@ -78,6 +81,19 @@ func sanitize(args *modelArgs, weights map[string]*mlx.Array) {
 			a.Free()
 			delete(weights, name)
 		}
+	}
+}
+
+// VocabSize returns the number of tokens the model knows: token ids run from
+// 0 up to but not including it.
+func (m *Model) VocabSize() int {
+	return m.embedTokens.NumEmbeddings()
+}
+
+// Free releases the weights. The model must not be used afterwards.
+func (m *Model) Free() {
+	for _, a := range m.weights {
+		a.Free()
 	}
 }
 

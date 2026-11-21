@@ -58,14 +58,44 @@ static int mlx_go_swiglu(mlx_array *res, const mlx_array gate, const mlx_array x
 */
 import "C"
 
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
+
 // This file holds the functions that Python builds with mx.compile, which
 // fuses a chain of element-wise operations into one kernel: one pass over the
 // data and no intermediate arrays.
 
 // SwiGLU returns silu(gate) * x, where silu(g) is g * sigmoid(g): the
 // activation of gated feed-forward layers (mlx_lm.models.activations.swiglu).
+// gate and x broadcast like the operands of Multiply.
 func SwiGLU(gate, x *Array) *Array {
+	// The compiled function serves every shape and so checks none: given two
+	// shapes that do not broadcast it would read past the smaller array.
+	checkBroadcast(gate.Shape(), x.Shape())
 	res := &Array{}
 	check(C.mlx_go_swiglu(&res.c, gate.live(), x.live()))
 	return own(res)
+}
+
+// checkBroadcast panics with the *Error of MLX's binary operations unless
+// the two shapes broadcast: aligned at their last dimension, every pair of
+// sizes must be equal or contain a one.
+func checkBroadcast(a, b []int) {
+	for i := 1; i <= min(len(a), len(b)); i++ {
+		if m, n := a[len(a)-i], b[len(b)-i]; m != n && m != 1 && n != 1 {
+			panic(&Error{Msg: fmt.Sprintf("[broadcast_shapes] Shapes %s and %s cannot be broadcast.", shapeString(a), shapeString(b))})
+		}
+	}
+}
+
+// shapeString formats a shape as MLX does in its messages: (2,3).
+func shapeString(shape []int) string {
+	dims := make([]string, len(shape))
+	for i, d := range shape {
+		dims[i] = strconv.Itoa(d)
+	}
+	return "(" + strings.Join(dims, ",") + ")"
 }

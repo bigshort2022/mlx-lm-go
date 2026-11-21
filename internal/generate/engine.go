@@ -6,7 +6,10 @@ package generate
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
+	"sync"
+	"sync/atomic"
 
 	"github.com/bigshort2022/mlx-lm-go/internal/engine"
 	"github.com/bigshort2022/mlx-lm-go/internal/exec"
@@ -33,15 +36,33 @@ type Options struct {
 type Engine struct {
 	thread          *exec.Thread
 	model           models.Model
+	vocab           int // token ids run from 0 up to but not including it; 0 if the model does not tell
 	eos             []int32
 	prefillStepSize int
+
+	loaded    bool        // made by Load: it holds engineOpen until Close
+	closing   atomic.Bool // set by Close: no generation starts any more
+	closeOnce sync.Once
 }
+
+// engineOpen is true while an engine of this process is open. There can be
+// only one: the scopes of package mlx are process-wide, so two inference
+// threads would free each other's arrays.
+var engineOpen atomic.Bool
+
+// vocabulary is implemented by the models that know how many tokens they
+// have.
+type vocabulary interface{ VocabSize() int }
 
 var _ engine.Engine = (*Engine)(nil)
 
-// Load loads the model in dir onto a new inference thread.
+// Load loads the model in dir onto a new inference thread. Only one engine
+// can be open in a process: Load fails until the previous one is closed.
 func Load(dir string, opts Options) (*Engine, error) {
-	e := &Engine{thread: exec.Start(), prefillStepSize: opts.PrefillStepSize}
+	if !engineOpen.CompareAndSwap(false, true) {
+		return nil, errors.New("generate: an engine is already open; close it first")
+	}
+	e := &Engine{thread: exec.Start(), prefillStepSize: opts.PrefillStepSize, loaded: true}
 	if e.prefillStepSize <= 0 {
 		e.prefillStepSize = defaultPrefillStepSize
 	}
@@ -51,11 +72,15 @@ func Load(dir string, opts Options) (*Engine, error) {
 			return err
 		}
 		e.model = model
+		if v, ok := model.(vocabulary); ok {
+			e.vocab = v.VocabSize()
+		}
 		e.eos = endOfSequence(cfg, opts)
 		return nil
 	})
 	if err != nil {
 		e.thread.Close()
+		engineOpen.Store(false)
 		return nil, err
 	}
 	return e, nil
@@ -70,10 +95,31 @@ func endOfSequence(cfg models.Config, opts Options) []int32 {
 	return opts.EOSTokenIDs
 }
 
-// Close stops the inference thread after the generation in progress. Later
-// calls of Generate fail.
+// releasable is implemented by the models that can free their weights.
+type releasable interface{ Free() }
+
+// Close frees the model and stops the inference thread, after the generation
+// in progress. Generations that wait behind it and later calls of Generate
+// fail with exec.ErrClosed. Once Close has returned, Load can open another
+// engine.
 func (e *Engine) Close() {
-	e.thread.Close()
+	e.closeOnce.Do(func() {
+		e.closing.Store(true)
+		// Arrays have no finalizers: the weights stay until they are freed,
+		// and that must happen on the thread that owns them. An error means
+		// the thread is gone, and with it the chance to free.
+		_ = e.thread.Do(context.Background(), func() error {
+			if model, ok := e.model.(releasable); ok {
+				model.Free()
+			}
+			mlx.ClearCache()
+			return nil
+		})
+		e.thread.Close()
+		if e.loaded {
+			engineOpen.Store(false)
+		}
+	})
 }
 
 // Generate implements engine.Engine. It may be called from any goroutine;
@@ -81,14 +127,24 @@ func (e *Engine) Close() {
 //
 // It samples at most req.MaxTokens tokens. It finishes with "stop" when it
 // samples an end-of-sequence token, which it counts in CompletionTokens but
-// does not emit, and with "length" when the budget runs out first. When ctx
-// ends it returns ctx.Err() within one token, together with the counts
-// reached so far.
+// does not emit, and with "length" when the budget runs out first.
+//
+// When ctx ends it returns ctx.Err() together with the counts reached so far.
+// A single MLX evaluation cannot be interrupted, so that takes up to one
+// token while tokens are sampled and up to one prefill step while the prompt
+// is fed: about a second for the default step of 2048 tokens on the
+// reference model. A smaller Options.PrefillStepSize shortens it.
+//
+// It fails, before any token, for an empty prompt, for a prompt token
+// outside the vocabulary and for sampling parameters the reference rejects.
 //
 // emit runs on the inference thread: it must not call Generate or Close.
 func (e *Engine) Generate(ctx context.Context, req engine.Request, emit func(token int32)) (engine.Result, error) {
 	res := engine.Result{PromptTokens: len(req.Prompt)}
 	err := e.thread.Do(ctx, func() error {
+		if e.closing.Load() {
+			return exec.ErrClosed // queued before Close: the model is being freed
+		}
 		return e.generate(ctx, req, emit, &res)
 	})
 	return res, err
@@ -99,6 +155,9 @@ func (e *Engine) Generate(ctx context.Context, req engine.Request, emit func(tok
 func (e *Engine) generate(ctx context.Context, req engine.Request, emit func(token int32), res *engine.Result) error {
 	if len(req.Prompt) == 0 {
 		return errors.New("generate: the prompt is empty")
+	}
+	if err := e.checkPrompt(req.Prompt); err != nil {
+		return err
 	}
 	if req.MaxTokens <= 0 {
 		res.FinishReason = "length"
@@ -128,62 +187,69 @@ func (e *Engine) generate(ctx context.Context, req engine.Request, emit func(tok
 
 	// Like the reference, compute one token ahead: the next step is in flight
 	// on the GPU while the current token is read and handed to emit.
-	y, err := run.first(prompt)
-	if err != nil {
+	if run.y, err = run.first(prompt); err != nil {
 		return err
 	}
 	for n := 0; ; n++ {
 		if err := ctx.Err(); err != nil {
-			y.Free()
 			return err
 		}
-		var next *mlx.Array
 		if n+1 < req.MaxTokens {
-			if next, err = run.step(y); err != nil {
-				y.Free()
+			if run.next, err = run.step(run.y); err != nil {
 				return err
 			}
 		}
-		token := item(y)
+		token := run.y.Int32s()[0] // waits for the token
 		res.CompletionTokens++
 		if slices.Contains(e.eos, token) {
-			if next != nil {
-				next.Free()
-			}
 			res.FinishReason = "stop"
 			return nil
 		}
 		emit(token)
-		if next == nil {
+		if run.next == nil {
 			res.FinishReason = "length"
 			return nil
 		}
 		if n%clearCacheEvery == 0 {
 			mlx.ClearCache()
 		}
-		y = next
+		run.y.Free()
+		run.y, run.next = run.next, nil
 	}
 }
 
-// item waits for a token that run.sample started and frees its array.
-func item(y *mlx.Array) int32 {
-	defer y.Free()
-	return y.Int32s()[0]
+// checkPrompt reports the first prompt token that is not in the vocabulary.
+// MLX checks no index: such a token would be embedded from memory outside
+// the table and, with a penalty, used to write outside the logits.
+func (e *Engine) checkPrompt(prompt []int32) error {
+	if e.vocab == 0 {
+		return nil
+	}
+	for position, id := range prompt {
+		if id < 0 || int(id) >= e.vocab {
+			return fmt.Errorf("generate: prompt token %d at position %d is outside the vocabulary of %d tokens", id, position, e.vocab)
+		}
+	}
+	return nil
 }
 
-// run is the state of one generation.
+// run is the state of one generation. It owns its arrays.
 type run struct {
 	model   models.Model
 	state   models.State
 	sampler *sample.Sampler
 	tokens  *mlx.Array // the tokens so far, kept only when the sampler uses them
+	y       *mlx.Array // the token being computed or read: int32, shape [1]
+	next    *mlx.Array // the token after y, computed ahead; nil at the last one
 }
 
-// free releases what the run holds.
+// free releases what the run holds, however the generation ended.
 func (r *run) free() {
 	r.state.Free()
-	if r.tokens != nil {
-		r.tokens.Free()
+	for _, a := range []*mlx.Array{r.tokens, r.y, r.next} {
+		if a != nil {
+			a.Free()
+		}
 	}
 }
 

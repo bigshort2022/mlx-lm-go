@@ -11,9 +11,13 @@ import (
 
 // Config is what the loader needs to know about a model, read from its
 // config.json.
+//
+// EOSTokenIDs is the one field that another file can set: when
+// generation_config.json exists and names end-of-sequence tokens, those
+// replace the ones of config.json, as in mlx-lm's load_config.
 type Config struct {
 	ModelType    string
-	EOSTokenIDs  []int32 // from config.json "eos_token_id", a number or a list; empty when absent
+	EOSTokenIDs  []int32 // "eos_token_id", a number or a list, of generation_config.json or else config.json; empty when absent
 	Quantization *Quantization
 	Raw          json.RawMessage // the whole config.json, for the architecture package
 }

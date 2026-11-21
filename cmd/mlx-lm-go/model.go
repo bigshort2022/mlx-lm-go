@@ -47,8 +47,9 @@ type modelEngine interface {
 	Close()
 }
 
-// loadEngine loads the model in dir. It is a variable because nothing frees
-// the weights of a loaded model: the tests load one and share it.
+// loadEngine loads the model in dir. It is a variable because only one engine
+// may be open per process and loading takes seconds: the tests load one and
+// share it.
 var loadEngine = func(dir string, opts generate.Options) (modelEngine, error) {
 	e, err := generate.Load(dir, opts)
 	if err != nil {

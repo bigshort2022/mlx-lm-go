@@ -40,7 +40,7 @@ func denseLinear() map[string]*mlx.Array {
 func TestDenseLinearWithBias(t *testing.T) {
 	inScope(t, func() {
 		loader := NewLoader(denseLinear())
-		linear := loader.Linear("fc", 3, true)
+		linear := loader.Linear("fc", 3, 2, true)
 		if err := loader.Err(); err != nil {
 			t.Fatal(err)
 		}
@@ -54,7 +54,7 @@ func TestDenseLinearWithoutBias(t *testing.T) {
 		weights := denseLinear()
 		delete(weights, "fc.bias")
 		loader := NewLoader(weights)
-		linear := loader.Linear("fc", 3, false)
+		linear := loader.Linear("fc", 3, 2, false)
 		if err := loader.Err(); err != nil {
 			t.Fatal(err)
 		}
@@ -68,8 +68,8 @@ func TestLoaderReportsTheFirstMissingTensor(t *testing.T) {
 		weights := denseLinear()
 		delete(weights, "fc.bias")
 		loader := NewLoader(weights)
-		loader.Linear("fc", 3, true)
-		loader.RMSNorm("norm", 1e-6)
+		loader.Linear("fc", 3, 2, true)
+		loader.RMSNorm("norm", 4, 1e-6)
 		err := loader.Err()
 		if err == nil || !strings.Contains(err.Error(), `"fc.bias"`) {
 			t.Errorf("Err() = %v, want an error naming fc.bias", err)
@@ -100,7 +100,7 @@ func TestLoaderInfersQuantizationFromShapes(t *testing.T) {
 	}{
 		{"affine 4 bits", 8, 1, mlx.Float16, 64, 4, "affine"},
 		{"affine 6 bits", 12, 2, mlx.Float16, 32, 6, "affine"},
-		{"affine 8 bits", 16, 4, mlx.Float32, 16, 8, "affine"},
+		{"affine 8 bits", 16, 1, mlx.Float32, 64, 8, "affine"},
 		{"nvfp4", 8, 4, mlx.Uint8, 16, 4, "nvfp4"},
 		{"mxfp4", 8, 2, mlx.Uint8, 32, 4, "mxfp4"},
 		{"mxfp8", 16, 2, mlx.Uint8, 32, 8, "mxfp8"},
@@ -109,7 +109,7 @@ func TestLoaderInfersQuantizationFromShapes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			inScope(t, func() {
 				loader := NewLoader(quantizedShapes(tt.weightColumns, tt.scaleColumns, tt.scales))
-				m := loader.Linear("fc", 64, false).weight
+				m := loader.Linear("fc", 64, 2, false).weight
 				if err := loader.Err(); err != nil {
 					t.Fatal(err)
 				}
@@ -122,10 +122,53 @@ func TestLoaderInfersQuantizationFromShapes(t *testing.T) {
 	}
 }
 
+// Like a strict load in the reference, a tensor of another shape than the
+// layer needs is an error that names the tensor and both shapes.
+func TestLoaderChecksTheShapesOfDenseLayers(t *testing.T) {
+	tests := []struct {
+		name  string
+		build func(l *Loader)
+		want  string
+	}{
+		{"linear with other inputs", func(l *Loader) { l.Linear("fc", 4, 2, true) }, `tensor "fc.weight" has shape [2 3], want [2 4]`},
+		{"linear with other outputs", func(l *Loader) { l.Linear("fc", 3, 5, true) }, `tensor "fc.weight" has shape [2 3], want [5 3]`},
+		{"bias", func(l *Loader) {
+			l.weights["fc.bias"] = mlx.Zeros(mlx.Float32, 1)
+			l.Linear("fc", 3, 2, true)
+		}, `tensor "fc.bias" has shape [1], want [2]`},
+		{"norm", func(l *Loader) { l.RMSNorm("norm", 5, 1e-6) }, `tensor "norm.weight" has shape [4], want [5]`},
+		{"embedding rows", func(l *Loader) { l.Embedding("emb", 9, 2) }, `tensor "emb.weight" has shape [4 2], want [9 2]`},
+		{"embedding width", func(l *Loader) { l.Embedding("emb", 4, 3) }, `tensor "emb.weight" has shape [4 2], want [4 3]`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inScope(t, func() {
+				weights := denseLinear()
+				weights["norm.weight"] = mlx.Zeros(mlx.Float32, 4)
+				weights["emb.weight"] = mlx.Zeros(mlx.Float32, 4, 2)
+				loader := NewLoader(weights)
+				tt.build(loader)
+				if err := loader.Err(); err == nil || err.Error() != tt.want {
+					t.Errorf("Err() = %v, want %s", err, tt.want)
+				}
+			})
+		})
+	}
+}
+
+func TestEmbeddingKnowsItsNumberOfTokens(t *testing.T) {
+	inScope(t, func() {
+		loader := NewLoader(map[string]*mlx.Array{"emb.weight": mlx.Zeros(mlx.Float32, 7, 2)})
+		if got := loader.Embedding("emb", 7, 2).NumEmbeddings(); got != 7 {
+			t.Errorf("NumEmbeddings() = %d, want 7", got)
+		}
+	})
+}
+
 func TestLoaderRejectsPackingOfNoKnownMode(t *testing.T) {
 	inScope(t, func() {
 		loader := NewLoader(quantizedShapes(8, 1, mlx.Uint8)) // 4 bits in groups of 64 with integer scales
-		loader.Linear("fc", 64, false)
+		loader.Linear("fc", 64, 2, false)
 		err := loader.Err()
 		if err == nil || !strings.Contains(err.Error(), "fc") {
 			t.Errorf("Err() = %v, want an error about the quantization of fc", err)
@@ -139,7 +182,7 @@ func TestLoaderListsUnusedTensors(t *testing.T) {
 		weights["zz.weight"] = mlx.Zeros(mlx.Float32, 1)
 		weights["aa.weight"] = mlx.Zeros(mlx.Float32, 1)
 		loader := NewLoader(weights)
-		loader.Linear("fc", 3, false)
+		loader.Linear("fc", 3, 2, false)
 		if got, want := loader.Unused(), []string{"aa.weight", "fc.bias", "zz.weight"}; !slices.Equal(got, want) {
 			t.Errorf("Unused() = %v, want %v", got, want)
 		}
@@ -151,7 +194,7 @@ func TestDenseEmbedding(t *testing.T) {
 		loader := NewLoader(map[string]*mlx.Array{
 			"emb.weight": mlx.FromFloat32([]float32{0, 1, 2, 3, 4, 5, 6, 7}, 4, 2),
 		})
-		embedding := loader.Embedding("emb", 2)
+		embedding := loader.Embedding("emb", 4, 2)
 		ids := mlx.FromInt32([]int32{3, 0, 3}, 1, 3)
 		wantFloats(t, "embedding(ids)", embedding.Forward(ids), []int{1, 3, 2}, []float32{6, 7, 0, 1, 6, 7})
 		x := mlx.FromFloat32([]float32{1, -1, 0.5, 2}, 1, 2, 2)
@@ -165,7 +208,7 @@ func TestDenseRMSNorm(t *testing.T) {
 		loader := NewLoader(map[string]*mlx.Array{
 			"norm.weight": mlx.FromFloat32([]float32{1, 2, 0.5, -1}, 4),
 		})
-		norm := loader.RMSNorm("norm", 1e-6)
+		norm := loader.RMSNorm("norm", 4, 1e-6)
 		x := mlx.FromFloat32([]float32{1, 2, 3, 4, 0, 0, 0, 2}, 2, 4)
 		wantFloats(t, "rms_norm(x)", norm.Forward(x), []int{2, 4},
 			[]float32{0.365148, 1.46059, 0.547723, -1.46059, 0, 0, 0, -2})
