@@ -8,10 +8,38 @@ type expr interface {
 	eval(sc *scope) (any, error)
 }
 
-// literalExpr is a constant: a string, an integer, a boolean or none.
+// literalExpr is an immutable value known when the template is parsed.
 type literalExpr struct{ value any }
 
 func (e literalExpr) eval(*scope) (any, error) { return e.value, nil }
+
+type tupleExpr []expr
+
+func newTupleExpr(items []expr) expr {
+	for _, item := range items {
+		if _, ok := item.(literalExpr); !ok {
+			return tupleExpr(items)
+		}
+	}
+	// A tuple of literals can be shared across renders.
+	values := make(tuple, len(items))
+	for i, item := range items {
+		values[i] = item.(literalExpr).value
+	}
+	return literalExpr{values}
+}
+
+func (e tupleExpr) eval(sc *scope) (any, error) {
+	values := make(tuple, len(e))
+	for i, item := range e {
+		value, err := item.eval(sc)
+		if err != nil {
+			return nil, err
+		}
+		values[i] = value
+	}
+	return values, nil
+}
 
 // nameExpr is a variable reference.
 type nameExpr string
