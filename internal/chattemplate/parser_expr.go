@@ -222,20 +222,43 @@ func (r *tagReader) parsePrimary() (expr, error) {
 		r.pos++
 		return nameExpr(tok.text), nil
 	case r.acceptOp("("):
-		value, err := r.parseExpression()
-		if err != nil {
-			return nil, err
-		}
-		if r.isOp(",") {
-			return nil, r.errorf("tuple literals are not supported")
-		}
-		return value, r.expectOp(")")
+		return r.parseParenthesized()
 	case r.isOp("["):
 		return nil, r.errorf("list literals are not supported")
 	case r.isOp("{"):
 		return nil, r.errorf("dict literals are not supported")
 	}
 	return nil, r.errorf("unexpected %s", tok.describe())
+}
+
+// parseParenthesized distinguishes an empty tuple, a grouped expression and
+// a comma-delimited tuple. A trailing comma makes even one item a tuple.
+func (r *tagReader) parseParenthesized() (expr, error) {
+	if r.acceptOp(")") {
+		return literalExpr{tuple(nil)}, nil
+	}
+	first, err := r.parseExpression()
+	if err != nil {
+		return nil, err
+	}
+	if !r.acceptOp(",") {
+		return first, r.expectOp(")")
+	}
+	items := []expr{first}
+	for !r.isOp(")") {
+		item, err := r.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+		if !r.acceptOp(",") {
+			break
+		}
+	}
+	if err := r.expectOp(")"); err != nil {
+		return nil, err
+	}
+	return newTupleExpr(items), nil
 }
 
 // parsePostfix parses attribute access, subscripts and calls after a value.
@@ -396,15 +419,29 @@ func (r *tagReader) parseFilter(value expr) (expr, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(args) > 0 {
+	if len(args) > 0 && !spec.positional {
 		return nil, r.errorf("filter %q: positional arguments are not supported", name.text)
+	}
+	if len(args) > len(spec.options) {
+		return nil, r.errorf("filter %q: too many positional arguments", name.text)
 	}
 	for _, option := range kwargs {
 		if !spec.takes(option.name) {
 			return nil, r.errorf("filter %q: argument %q is not supported", name.text, option.name)
 		}
+		if slices.Contains(spec.options[:len(args)], option.name) {
+			return nil, r.errorf("filter %q: argument %q given twice", name.text, option.name)
+		}
 	}
-	filtered.options = kwargs
+	if len(args) == 0 {
+		filtered.options = kwargs
+	} else {
+		filtered.options = make([]namedExpr, 0, len(args)+len(kwargs))
+		for i, arg := range args {
+			filtered.options = append(filtered.options, namedExpr{spec.options[i], arg})
+		}
+		filtered.options = append(filtered.options, kwargs...)
+	}
 	return filtered, nil
 }
 

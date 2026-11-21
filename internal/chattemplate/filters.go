@@ -10,11 +10,12 @@ import (
 // filterFunc implements "value|filter(options)".
 type filterFunc func(value any, options []namedValue) (any, error)
 
-// filterSpec is a filter and the keyword arguments it accepts. No supported
-// filter takes positional arguments.
+// filterSpec defines the accepted keywords, in positional order for a filter
+// that also accepts positional arguments.
 type filterSpec struct {
-	apply   filterFunc
-	options []string
+	apply      filterFunc
+	options    []string
+	positional bool
 }
 
 func (s filterSpec) takes(option string) bool {
@@ -24,12 +25,31 @@ func (s filterSpec) takes(option string) bool {
 // filters are the filters a template may use. tojson is Hugging Face's, not
 // Jinja's; the others behave as in jinja2/filters.py.
 var filters = map[string]filterSpec{
-	"items":  {apply: filterItems},
-	"length": {apply: filterLength},
-	"safe":   {apply: filterSafe},
-	"string": {apply: filterString},
-	"tojson": {apply: filterToJSON, options: []string{"ensure_ascii", "indent"}},
-	"trim":   {apply: filterTrim},
+	"default": {apply: filterDefault, options: []string{"default_value", "boolean"}, positional: true},
+	"items":   {apply: filterItems},
+	"length":  {apply: filterLength},
+	"safe":    {apply: filterSafe},
+	"string":  {apply: filterString},
+	"tojson":  {apply: filterToJSON, options: []string{"ensure_ascii", "indent"}},
+	"trim":    {apply: filterTrim},
+}
+
+// filterDefault substitutes for Undefined or, in boolean mode, any falsy value.
+func filterDefault(value any, options []namedValue) (any, error) {
+	var fallback any = ""
+	boolean := false
+	for _, option := range options {
+		switch option.name {
+		case "default_value":
+			fallback = option.value
+		case "boolean":
+			boolean = truthy(option.value)
+		}
+	}
+	if _, missing := value.(undefined); missing || (boolean && !truthy(value)) {
+		return fallback, nil
+	}
+	return value, nil
 }
 
 // filterLength is Python's len().

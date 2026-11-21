@@ -21,11 +21,11 @@
 //     with positional, keyword and default arguments. Comments and whitespace
 //     control, with trim_blocks and lstrip_blocks on as Hugging Face sets
 //     them.
-//   - Expressions: string and integer literals, true, false and none; names;
-//     attribute, item and slice access; calls; + and -, ~, the comparisons,
-//     in and not in, and, or, not, and "a if b else c".
-//   - Filters: items, length, safe, string, trim, and Hugging Face's tojson
-//     with indent and ensure_ascii.
+//   - Expressions: string and integer literals, parenthesized tuples, true,
+//     false and none; names; attribute, item and slice access; calls; + and -,
+//     ~, the comparisons, in and not in, and, or, not, and "a if b else c".
+//   - Filters: default (with optional fallback and boolean mode), items, length,
+//     safe, string, trim, and Hugging Face's tojson with indent and ensure_ascii.
 //   - Tests: defined, undefined, none, true, false, string, mapping,
 //     iterable, sequence.
 //   - String methods: startswith, endswith, split with a separator, strip,
@@ -74,8 +74,8 @@
 //     address. Ordering two lists is an error.
 //   - The string methods take only the arguments listed above, namespace
 //     takes only keyword arguments, and tojson takes an indent of at most
-//     100 and no positional, separators or sort_keys argument. The other
-//     filters take no arguments.
+//     100 and no positional, separators or sort_keys argument. Apart from
+//     default, the other filters take no arguments.
 //
 // Templates:
 //

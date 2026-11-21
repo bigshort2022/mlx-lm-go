@@ -35,7 +35,6 @@ func TestParseNamesTheUnsupportedConstruct(t *testing.T) {
 		// Literals.
 		{"{{ [1, 2] }}", "list literals are not supported"},
 		{"{{ {'a': 1} }}", "dict literals are not supported"},
-		{"{{ (1, 2) }}", "tuple literals are not supported"},
 		{"{{ 1.5 }}", "float literals are not supported"},
 		{"{{ 0x1f }}", `unsupported number literal "0x"`},
 		{"{{ 1_000 }}", `unsupported number literal "1_"`},
@@ -43,7 +42,8 @@ func TestParseNamesTheUnsupportedConstruct(t *testing.T) {
 		{"{{ 'a' 'b' }}", `unexpected string "b"`},
 		// Filters and tests.
 		{"{{ s | upper }}", `filter "upper" is not supported`},
-		{"{{ q | default('x') }}", `filter "default" is not supported`},
+		{"{{ q | default('x', true, false) }}", `filter "default": too many positional arguments`},
+		{"{{ q | default('x', default_value='y') }}", `filter "default": argument "default_value" given twice`},
 		{"{{ l | join(', ') }}", `filter "join" is not supported`},
 		{"{{ s | trim('x') }}", `filter "trim": positional arguments are not supported`},
 		{"{{ v | tojson(2) }}", `filter "tojson": positional arguments are not supported`},

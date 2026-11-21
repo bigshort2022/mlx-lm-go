@@ -19,7 +19,7 @@ package chattemplate
 //	callable    macro, global function or bound string method
 //
 // A template cannot modify a value, except a namespace through
-// {% set ns.attr = ... %}. Every value belongs to one Render call.
+// {% set ns.attr = ... %}. Mutable state belongs to one Render call.
 
 // undefined is Jinja's Undefined: it renders as nothing and is falsy, but
 // reading an attribute or item of it, or computing with it, is an error.
