@@ -13,7 +13,7 @@ import (
 // flags.
 type Config struct {
 	Host             string          // default "127.0.0.1"
-	Port             int             // default 8080
+	Port             int             // default 8080; must be the port the listener is bound to, see New
 	AllowedOrigins   []string        // default empty: same-origin only. "*" allows any origin.
 	Model            string          // value of --model; the id listed by /v1/models
 	LogLevel         string          // default "INFO"

@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -167,7 +168,13 @@ func (l *promptLog) seen() []string {
 // returned channel gets the response status, or 0 if the request failed.
 func startCompletion(ctx context.Context, t *testing.T, ts *httptest.Server, prompt string) <-chan int {
 	t.Helper()
-	req, err := http.NewRequestWithContext(ctx, "POST", ts.URL+"/v1/completions", strings.NewReader(fmt.Sprintf(`{"prompt": %q}`, prompt)))
+	return startCompletionWith(ctx, t, ts, fmt.Sprintf(`{"prompt": %q}`, prompt))
+}
+
+// startCompletionWith is startCompletion for a whole request body.
+func startCompletionWith(ctx context.Context, t *testing.T, ts *httptest.Server, body string) <-chan int {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, "POST", ts.URL+"/v1/completions", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,5 +277,117 @@ func TestQueuedRequestWhoseClientLeftNeverReachesTheEngine(t *testing.T) {
 	}
 	if n := h.engine.Calls.Load(); n != 2 {
 		t.Fatalf("%d generations ran, want 2", n)
+	}
+}
+
+// lateQuitter is a context that cannot wake a waiter: Done never fires. Its
+// Err starts to report cancellation when the test says so. That pins down the
+// moment a real context would be caught at, just after the turn was handed
+// over and just before the waiter looks.
+type lateQuitter struct {
+	context.Context
+	quit atomic.Bool
+}
+
+func (c *lateQuitter) Done() <-chan struct{} { return nil }
+
+func (c *lateQuitter) Err() error {
+	if c.quit.Load() {
+		return context.Canceled
+	}
+	return nil
+}
+
+func TestQueueTurnHandedToAWaiterWhoJustGaveUpPassesOn(t *testing.T) {
+	var q queue
+	if err := q.acquire(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	quitter := &lateQuitter{Context: context.Background()}
+	gaveUp := make(chan error, 1)
+	go func() { gaveUp <- q.acquire(quitter) }()
+	awaitWaiters(t, &q, 1)
+	next := make(chan error, 1)
+	go func() { next <- q.acquire(context.Background()) }()
+	awaitWaiters(t, &q, 2)
+
+	quitter.quit.Store(true) // gives up, but is still first in line
+	q.release()              // so the turn goes to it
+
+	if err := awaitResult(t, gaveUp); !errors.Is(err, context.Canceled) {
+		t.Fatalf("acquire of the waiter who gave up = %v, want context.Canceled", err)
+	}
+	if err := awaitResult(t, next); err != nil {
+		t.Fatalf("the turn was not passed on: %v", err)
+	}
+	q.release()
+	if err := q.acquire(context.Background()); err != nil {
+		t.Fatalf("queue is not free at the end: %v", err)
+	}
+}
+
+func TestQueueRefusesMoreThanItsLimitOfWaiters(t *testing.T) {
+	var q queue
+	if err := q.acquire(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	turns := make(chan error, maxQueued)
+	for i := range maxQueued {
+		go func() { turns <- q.acquire(context.Background()) }()
+		awaitWaiters(t, &q, i+1)
+	}
+
+	if err := q.acquire(context.Background()); !errors.Is(err, errQueueFull) {
+		t.Fatalf("acquire with %d waiting = %v, want errQueueFull", maxQueued, err)
+	}
+	awaitWaiters(t, &q, maxQueued) // the refused caller did not join the line
+
+	for range maxQueued {
+		q.release()
+		if err := awaitResult(t, turns); err != nil {
+			t.Fatalf("a waiter lost its turn: %v", err)
+		}
+	}
+	q.release()
+	if err := q.acquire(context.Background()); err != nil {
+		t.Fatalf("queue is not free at the end: %v", err)
+	}
+}
+
+func TestRequestBeyondTheQueueLimitIsTurnedAway(t *testing.T) {
+	g := newGate(t, 0)
+	h, ts := newLiveHarness(t, scripted(countPieces...), func(h *harness) { h.engine.Gate = g.wait })
+	ctx := context.Background()
+
+	running := startCompletion(ctx, t, ts, "running")
+	g.awaitEntered(t)
+	var queued []<-chan int
+	for i := range maxQueued {
+		queued = append(queued, startCompletion(ctx, t, ts, fmt.Sprint("queued ", i)))
+		awaitWaiters(t, queueOf(h), i+1)
+	}
+
+	for _, body := range []string{`{"prompt": "one too many"}`, `{"prompt": "one too many", "stream": true}`} {
+		resp := postJSON(t, ts.URL+"/v1/completions", body)
+		raw, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != 503 || !jsonEqual(t, string(raw), `{"error": "server busy: too many queued requests"}`) {
+			t.Errorf("request beyond the limit = %d %s, want 503 and the busy error", resp.StatusCode, raw)
+		}
+		if retry := resp.Header.Get("Retry-After"); retry != "1" {
+			t.Errorf("Retry-After = %q, want 1", retry)
+		}
+		if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+			t.Errorf("Content-Type = %q, want application/json", ct)
+		}
+	}
+	if n := h.engine.Calls.Load(); n != 1 {
+		t.Errorf("%d generations started, want only the running one", n)
+	}
+
+	g.open()
+	for _, status := range append(queued, running) {
+		if code := awaitResult(t, status); code != 200 {
+			t.Fatalf("status = %d, want 200", code)
+		}
 	}
 }

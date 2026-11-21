@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"time"
 )
 
 // server is the http.Handler returned by New.
@@ -14,11 +15,19 @@ type server struct {
 	hosts  map[string]bool             // accepted Host headers; nil accepts any
 	routes map[string]http.HandlerFunc // keyed by "METHOD /path"
 	queue  queue                       // admits one completion at a time
+
+	// writeTimeout is how long a client may take to accept one stream event.
+	writeTimeout time.Duration
 }
 
 // New returns the HTTP handler.
+//
+// cfg.Port must be the port the listener is bound to: on loopback the handler
+// only accepts requests whose Host header names that port. A caller that
+// listens on port 0 has to put the port it was given into cfg before calling
+// New; with 0 left in place every request is refused with 403.
 func New(cfg Config, deps Deps) http.Handler {
-	s := &server{cfg: cfg, deps: deps, hosts: allowedHosts(cfg)}
+	s := &server{cfg: cfg, deps: deps, hosts: allowedHosts(cfg), writeTimeout: streamWriteTimeout}
 	s.routes = map[string]http.HandlerFunc{
 		"GET /health":               s.handleHealth,
 		"GET /v1/models":            s.handleModels,

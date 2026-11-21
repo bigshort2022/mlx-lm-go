@@ -118,13 +118,10 @@ func (p reply) chunk(text, finish string) completionResponse {
 }
 
 // usageChunk is the optional event that reports token counts at the end of a
-// stream. Like the reference it has no choices.
+// stream. As in the reference it has no choices and is a "chat.completion",
+// on the text completions endpoint too.
 func (p reply) usageChunk(res engine.Result) completionResponse {
-	object := "text_completion"
-	if p.chat {
-		object = "chat.completion"
-	}
-	body := p.body(object)
+	body := p.body("chat.completion")
 	body.Usage = usageOf(res)
 	return body
 }

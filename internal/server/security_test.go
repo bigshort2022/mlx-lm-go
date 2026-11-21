@@ -1,7 +1,11 @@
 package server
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
@@ -80,7 +84,7 @@ func TestHostHeaderOtherLoopbackConfigurations(t *testing.T) {
 }
 
 func TestHostHeaderIsNotCheckedOffLoopback(t *testing.T) {
-	for _, host := range []string{"0.0.0.0", "192.168.1.5", "mybox.local", ""} {
+	for _, host := range []string{"0.0.0.0", "192.168.1.5", "box.example", ""} {
 		t.Run(host, func(t *testing.T) {
 			h := newHarness(t, scripted(countPieces...), func(h *harness) { h.cfg.Host = host })
 			got := h.do("POST", "/v1/chat/completions", chatRequest, map[string]string{"Host": "anything.example:8080"})
@@ -179,11 +183,10 @@ func TestOtherOriginsAreForbidden(t *testing.T) {
 				if msg := assertRejected(t, h, got, 403); msg != want {
 					t.Errorf("%s %s: error = %q, want %q", req.method, req.path, msg, want)
 				}
-				// The page may read the refusal, so that it can tell the
-				// visitor which flag to add, and nothing more.
-				wantCORS := map[string]string{"Access-Control-Allow-Origin": tc.origin, "Vary": "Origin"}
-				if cors := corsHeaders(got); !reflect.DeepEqual(cors, wantCORS) {
-					t.Errorf("%s %s: CORS headers = %v, want %v", req.method, req.path, cors, wantCORS)
+				// Nothing in the refusal is readable by the page: a readable
+				// answer would let any website find out that this server runs here.
+				if cors := corsHeaders(got); len(cors) != 0 {
+					t.Errorf("%s %s: CORS headers = %v, want none", req.method, req.path, cors)
 				}
 			}
 		})
@@ -333,5 +336,181 @@ func TestOptionsWithoutOriginIsAnEmptyAnswer(t *testing.T) {
 	got := newHarness(t).do("OPTIONS", "/v1/chat/completions", "", nil)
 	if got.Code != 204 || got.Body.Len() != 0 {
 		t.Fatalf("status = %d with body %q, want 204 and no body", got.Code, got.Body)
+	}
+}
+
+// When the server listens beyond loopback the Host header cannot be checked
+// against known names, so a page on a DNS name rebound to the server would
+// look same-origin. Only a Host that cannot be rebound makes a page
+// same-origin: an IP address, localhost, or the configured host name.
+func TestSameOriginOffLoopbackNeedsAHostThatCannotBeRebound(t *testing.T) {
+	for _, host := range []string{"0.0.0.0", "", "192.168.1.5"} {
+		t.Run("listening on "+host, func(t *testing.T) {
+			cases := []struct {
+				header string // Host header; the Origin is http://<header>
+				want   int
+			}{
+				{"evil.example:8080", 403},
+				{"evil.example", 403},
+				{"192.168.1.5.evil.example:8080", 403},
+				{"192.168.1.5:8080", 200},
+				{"10.0.0.7:8080", 200},
+				{"[fe80::1]:8080", 200},
+				{"localhost:8080", 200},
+			}
+			for _, tc := range cases {
+				h := newHarness(t, scripted(countPieces...), func(h *harness) { h.cfg.Host = host })
+				origin := "http://" + tc.header
+				got := h.do("POST", "/v1/chat/completions", chatRequest, map[string]string{"Host": tc.header, "Origin": origin})
+				if got.Code != tc.want {
+					t.Errorf("Host %s: status = %d, want %d: %s", tc.header, got.Code, tc.want, got.Body)
+				}
+				if tc.want == 403 {
+					assertRejected(t, h, got, 403)
+				}
+				// Without an Origin the request does not come from a page.
+				if got := h.do("GET", "/health", "", map[string]string{"Host": tc.header}); got.Code != 200 {
+					t.Errorf("Host %s without Origin: status = %d, want 200", tc.header, got.Code)
+				}
+			}
+		})
+	}
+}
+
+func TestSameOriginOffLoopbackAcceptsTheConfiguredHostName(t *testing.T) {
+	h := newHarness(t, scripted(countPieces...), func(h *harness) { h.cfg.Host = "MyBox.lan" })
+	for header, want := range map[string]int{"mybox.lan:8080": 200, "evil.example:8080": 403} {
+		got := h.do("POST", "/v1/chat/completions", chatRequest, map[string]string{"Host": header, "Origin": "http://" + header})
+		if got.Code != want {
+			t.Errorf("Host %s: status = %d, want %d: %s", header, got.Code, want, got.Body)
+		}
+	}
+}
+
+func TestReboundNameMayStillBeListedAsAnOrigin(t *testing.T) {
+	h := newHarness(t, scripted(countPieces...), func(h *harness) {
+		h.cfg.Host = "0.0.0.0"
+		h.cfg.AllowedOrigins = []string{"http://box.example:8080"}
+	})
+	got := h.do("POST", "/v1/chat/completions", chatRequest, map[string]string{"Host": "box.example:8080", "Origin": "http://box.example:8080"})
+	if got.Code != 200 {
+		t.Fatalf("status = %d, want 200: %s", got.Code, got.Body)
+	}
+}
+
+// A host name that is only another name for loopback keeps the Host check on.
+func TestLoopbackAliasKeepsTheHostCheck(t *testing.T) {
+	if addrs, err := net.LookupHost("localhost."); err != nil || len(addrs) == 0 {
+		t.Skipf("localhost. does not resolve here: %v", err)
+	}
+	h := newHarness(t, scripted(countPieces...), func(h *harness) { h.cfg.Host = "localhost." })
+	for header, want := range map[string]int{
+		"localhost.:8080":   200,
+		"localhost:8080":    200,
+		"127.0.0.1:8080":    200,
+		"evil.example:8080": 403,
+	} {
+		got := h.do("POST", "/v1/chat/completions", chatRequest, map[string]string{"Host": header})
+		if got.Code != want {
+			t.Errorf("Host %s: status = %d, want %d: %s", header, got.Code, want, got.Body)
+		}
+	}
+}
+
+func TestIsLoopback(t *testing.T) {
+	for host, want := range map[string]bool{
+		"127.0.0.1":            true,
+		"127.8.9.10":           true,
+		"::1":                  true,
+		"localhost":            true,
+		"LOCALHOST":            true,
+		"":                     false,
+		"0.0.0.0":              false,
+		"::":                   false,
+		"192.168.1.5":          false,
+		"no-such-host.invalid": false,
+	} {
+		if got := isLoopback(host); got != want {
+			t.Errorf("isLoopback(%q) = %v, want %v", host, got, want)
+		}
+	}
+}
+
+// A page on a name whose DNS record was rebound to 127.0.0.1 reaches the
+// server over a real connection, but its requests still name the page's host.
+func TestReboundNameIsRefusedOverARealConnection(t *testing.T) {
+	h, ts := newLiveHarness(t, withUI, scripted(countPieces...))
+	server := ts.Listener.Addr().String()
+	client := &http.Client{Transport: &http.Transport{
+		// Whatever name is asked for resolves to this machine.
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return new(net.Dialer).DialContext(ctx, network, server)
+		},
+	}}
+	defer client.CloseIdleConnections()
+	fetch := func(method, url, body string) (int, string) {
+		t.Helper()
+		req, err := http.NewRequest(method, url, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(raw)
+	}
+
+	rebound := fmt.Sprintf("http://evil.example:%d", h.cfg.Port)
+	for _, req := range []struct{ method, path, body string }{
+		{"GET", "/", ""},
+		{"GET", "/chat.js", ""},
+		{"GET", "/v1/models", ""},
+		{"POST", "/v1/chat/completions", chatRequest},
+	} {
+		status, body := fetch(req.method, rebound+req.path, req.body)
+		if status != 403 || !strings.Contains(body, "host not allowed: evil.example") {
+			t.Errorf("%s %s under the rebound name = %d %s, want 403 naming the host", req.method, req.path, status, body)
+		}
+	}
+	if n := h.engine.Calls.Load(); n != 0 {
+		t.Errorf("engine was called %d times", n)
+	}
+
+	// The same connection path under the server's own name works.
+	if status, body := fetch("GET", ts.URL+"/health", ""); status != 200 {
+		t.Errorf("GET /health under the real name = %d %s, want 200", status, body)
+	}
+}
+
+// New derives the accepted Host headers from Config.Port. A caller that
+// listens on port 0 and forgets to put the real port in the config gets a
+// server that refuses everything rather than one that accepts any Host.
+func TestUnresolvedPortZeroFailsClosed(t *testing.T) {
+	h := newHarness(t, withUI, scripted(countPieces...), func(h *harness) { h.cfg.Port = 0 })
+	ts := httptest.NewServer(h.handler)
+	defer ts.Close()
+
+	for _, path := range []string{"/health", "/", "/v1/models"} {
+		resp, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 403 {
+			t.Errorf("GET %s = %d, want 403", path, resp.StatusCode)
+		}
+	}
+	resp := post(t, ts.URL+"/v1/chat/completions", ts.URL, chatRequest)
+	if resp.StatusCode != 403 {
+		t.Errorf("POST /v1/chat/completions = %d, want 403", resp.StatusCode)
+	}
+	if n := h.engine.Calls.Load(); n != 0 {
+		t.Errorf("engine was called %d times", n)
 	}
 }

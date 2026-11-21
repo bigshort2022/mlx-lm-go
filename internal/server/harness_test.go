@@ -67,6 +67,7 @@ type harness struct {
 	tmpl    *fakeTemplater
 	wrap    func(engine.Engine) engine.Engine // if set, the server gets wrap(engine)
 	ui      fs.FS                             // if set, the server serves it as the web UI
+	tune    func(*server)                     // if set, adjusts the server after New
 	handler http.Handler
 }
 
@@ -89,6 +90,9 @@ func newHarness(t *testing.T, setup ...func(*harness)) *harness {
 		deps.Engine = h.wrap(h.engine)
 	}
 	h.handler = New(h.cfg, deps)
+	if h.tune != nil {
+		h.tune(h.handler.(*server))
+	}
 	return h
 }
 

@@ -1,9 +1,11 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http/httptest"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -40,23 +42,39 @@ func TestBodyThatIsNotAnObject(t *testing.T) {
 	}
 }
 
-func TestRecordedBadRequestsAreRejectedByName(t *testing.T) {
-	// The reference drops the connection or answers 404 for these; see the
-	// recordings. This server answers 400 with the reference's wording.
-	cases := map[string]string{
-		"err_missing_messages":           "Request did not contain messages",
-		"err_messages_wrong_type":        "messages must be of type list",
-		"err_stream_wrong_type":          "stream must be of type bool",
-		"err_max_tokens_negative":        "max_tokens must be at least 0",
-		"err_temperature_negative":       "temperature must be at least 0",
-		"err_top_p_range":                "top_p must be at most 1",
-		"err_logit_bias_type":            "logit_bias must be of type dict",
-		"err_completions_missing_prompt": "Request did not contain a prompt",
+// Every bad request recorded from the reference gets the reference's status
+// and message, except where the message is not the reference's own wording
+// but Python's: its JSON parser's, and an attribute error for messages that
+// are not a list.
+func TestRecordedBadRequestsMatchTheReference(t *testing.T) {
+	pythonWording := map[string]bool{"err_invalid_json": true, "err_messages_wrong_type": true}
+	paths, err := filepath.Glob(filepath.Join("..", "..", "testdata", "server", "err_*.json"))
+	if err != nil || len(paths) < 9 {
+		t.Fatalf("found %d err_*.json recordings (%v), want at least 9", len(paths), err)
 	}
-	for name, want := range cases {
+	names := []string{"chat_logprobs"}
+	for _, path := range paths {
+		names = append(names, strings.TrimSuffix(filepath.Base(path), ".json"))
+	}
+	for _, name := range names {
+		if pythonWording[name] {
+			continue
+		}
 		t.Run(name, func(t *testing.T) {
-			if msg, _ := replayError(t, name); msg != want {
-				t.Errorf("error = %q, want %q", msg, want)
+			rec := loadExchange(t, name)
+			var want struct {
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(rec.Response.Body), &want); err != nil || want.Error == "" {
+				t.Fatalf("recording has no error message: %s", rec.Response.Body)
+			}
+			h := newHarness(t, scripted(countPieces...))
+			got := h.replay(rec)
+			if got.Code != rec.Response.Status {
+				t.Errorf("status = %d, want the recorded %d", got.Code, rec.Response.Status)
+			}
+			if msg := assertRejected(t, h, got, got.Code); msg != want.Error {
+				t.Errorf("error = %q, want the recorded %q", msg, want.Error)
 			}
 		})
 	}
@@ -68,6 +86,39 @@ func TestFieldValidation(t *testing.T) {
 		want  string
 	}{
 		{`"top_p": -0.1`, "top_p must be at least 0"},
+		{`"max_tokens": 0`, "max_tokens must be at least 1"},
+		{`"max_completion_tokens": 0`, "max_completion_tokens must be at least 1"},
+		// Numbers the engine's 32-bit floats cannot hold.
+		{`"temperature": 1e39`, "temperature must be at most 3.4028234663852886e+38"},
+		{`"temperature": 1e999`, "temperature must be at most 3.4028234663852886e+38"},
+		{`"presence_penalty": -1e39`, "presence_penalty must be at least -3.4028234663852886e+38"},
+		{`"frequency_penalty": 4e38`, "frequency_penalty must be at most 3.4028234663852886e+38"},
+		{`"repetition_penalty": 1e39`, "repetition_penalty must be at most 3.4028234663852886e+38"},
+		{`"top_p": 1e39`, "top_p must be at most 1"},
+		{`"logit_bias": {"5": 1e39}`, "logit_bias values must be at most 3.4028234663852886e+38"},
+		{`"logit_bias": {"5": -1e39}`, "logit_bias values must be at least -3.4028234663852886e+38"},
+		{`"logit_bias": {"-1": 1}`, "logit_bias token ids must be at least 0"},
+		{`"logit_bias": {"5": null}`, "logit_bias must be a dict of int to float"},
+		{`"logit_bias": {"99999999999": 1}`, "logit_bias must be a dict of int to float"},
+		// Fields this server does not act on are still validated as in the
+		// reference.
+		{`"num_draft_tokens": -1`, "num_draft_tokens must be at least 0"},
+		{`"num_draft_tokens": "3"`, "num_draft_tokens must be of type int"},
+		{`"logprobs": 0`, "logprobs must be of type bool"},
+		{`"logprobs": "yes"`, "logprobs must be of type bool"},
+		{`"top_logprobs": 12`, "top_logprobs must be at most 11"},
+		{`"top_logprobs": -2`, "top_logprobs must be at least 0"},
+		{`"top_logprobs": 1.5`, "top_logprobs must be of type int"},
+		{`"xtc_probability": 1.5`, "xtc_probability must be at most 1"},
+		{`"xtc_probability": -0.5`, "xtc_probability must be at least 0"},
+		{`"xtc_threshold": 2`, "xtc_threshold must be at most 1"},
+		{`"xtc_threshold": "low"`, "xtc_threshold must be of type float"},
+		{`"adapters": 5`, "adapters must be of type str"},
+		// The reference's order decides which of several mistakes is named.
+		{`"logit_bias": [], "top_p": 2, "stream": "yes"`, "stream must be of type bool"},
+		{`"logit_bias": [], "top_p": 2, "max_tokens": 0`, "max_tokens must be at least 1"},
+		{`"logit_bias": [], "seed": "x", "top_k": -1`, "top_k must be at least 0"},
+		{`"tools": [{}], "seed": "x"`, "seed must be of type int"},
 		{`"top_k": -1`, "top_k must be at least 0"},
 		{`"top_k": 1.5`, "top_k must be of type int"},
 		{`"min_p": 2`, "min_p must be at most 1"},
@@ -80,7 +131,7 @@ func TestFieldValidation(t *testing.T) {
 		{`"max_tokens": "many"`, "max_tokens must be of type int"},
 		{`"max_tokens": true`, "max_tokens must be of type int"},
 		{`"max_tokens": 1.0`, "max_tokens must be of type int"},
-		{`"max_completion_tokens": -1`, "max_completion_tokens must be at least 0"},
+		{`"max_completion_tokens": -1`, "max_completion_tokens must be at least 1"},
 		{`"seed": -1`, "seed must be at least 0"},
 		{`"seed": "x"`, "seed must be of type int"},
 		{`"model": 5`, "model must be of type str"},
@@ -111,6 +162,7 @@ func TestMessageAndPromptValidation(t *testing.T) {
 		path, body, want string
 	}{
 		{"/v1/chat/completions", `{"messages": ["hi"]}`, "messages must be a list of dicts"},
+		{"/v1/chat/completions", `{"messages": "hi"}`, "messages must be of type list"},
 		{"/v1/chat/completions", `{"messages": null}`, "Request did not contain messages"},
 		{"/v1/completions", `{"prompt": ["a", "b"]}`, "prompt must be of type str"},
 	}
@@ -131,10 +183,11 @@ func TestLenientFieldValues(t *testing.T) {
 	cases := []string{
 		// null means "not given", as OpenAI clients send it.
 		`"temperature": null, "top_p": null, "max_tokens": null, "stream": null, "stop": null, "seed": null, "logit_bias": null, "chat_template_kwargs": null, "stream_options": null, "model": null`,
-		`"max_tokens": 0`,
+		`"max_tokens": 1`,
 		`"presence_penalty": -0.5, "frequency_penalty": -2`,
 		`"temperature": 2, "top_p": 1, "min_p": 0`,
-		`"temperature": 1e39, "presence_penalty": 1E2, "top_p": 1.0`,
+		`"temperature": 3e38, "presence_penalty": -1E2, "top_p": 1.0, "logit_bias": {"0": -3e38, "7": 2}`,
+		`"top_logprobs": -1, "xtc_threshold": 0.1, "xtc_probability": 0`,
 		`"unknown_field": {"anything": true}, "user": "someone", "n": 1`,
 	}
 	for _, fields := range cases {
@@ -166,10 +219,8 @@ func TestContentPartsMustBeText(t *testing.T) {
 
 func TestUnsupportedFieldsAreRejected(t *testing.T) {
 	for name, field := range map[string]string{
-		"chat_tools":         "tools",
-		"chat_tools_stream":  "tools",
-		"chat_logprobs":      "logprobs",
-		"err_logprobs_range": "logprobs",
+		"chat_tools":        "tools",
+		"chat_tools_stream": "tools",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if msg, _ := replayError(t, name); msg != field+" is not supported yet" {
@@ -187,7 +238,6 @@ func TestUnsupportedFieldsAreRejected(t *testing.T) {
 		"logprobs":         `true`,
 		"top_logprobs":     `5`,
 		"xtc_probability":  `0.5`,
-		"xtc_threshold":    `0.1`,
 	}
 	requests := map[string]string{
 		"/v1/chat/completions": `{"messages": [], %q: %s}`,

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"mime"
 	"net"
@@ -8,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // The server runs on the user's own machine, where any web page the user
@@ -42,28 +44,57 @@ func (s *server) admit(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // admitOrigin refuses requests from pages of origins that are not allowed,
-// and sets the CORS headers that let a page of another origin read the
-// response. Requests without an Origin, or from the server's own origin, are
-// not cross-origin and get no CORS headers.
+// and sets the CORS headers that let a page of an allowed other origin read
+// the response. Requests without an Origin, or from the server's own origin,
+// are not cross-origin and get no CORS headers.
 func (s *server) admitOrigin(w http.ResponseWriter, r *http.Request) (crossOrigin, ok bool) {
 	origin := r.Header.Get("Origin")
-	if origin == "" || origin == "http://"+strings.ToLower(r.Host) {
+	if origin == "" || s.sameOrigin(origin, strings.ToLower(r.Host)) {
 		return false, true // not sent by a page, or sent by a page this server serves
 	}
-	if slices.Contains(s.cfg.AllowedOrigins, "*") {
+	switch {
+	case slices.Contains(s.cfg.AllowedOrigins, "*"):
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		return true, true
-	}
-	// A refusal is readable too, so that the page can tell its visitor which
-	// flag is missing. That grants nothing else.
-	w.Header().Set("Access-Control-Allow-Origin", origin)
-	w.Header().Add("Vary", "Origin")
-	if !slices.Contains(s.cfg.AllowedOrigins, origin) {
+	case slices.Contains(s.cfg.AllowedOrigins, origin):
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Add("Vary", "Origin")
+	default:
+		// No CORS header here: the page must not be able to read the refusal,
+		// or any website could find out that this server is running. The
+		// message is for clients that are not browsers.
 		writeError(w, http.StatusForbidden, fmt.Sprintf(
 			"origin not allowed: %s; start the server with --allowed-origins %s", origin, origin))
 		return true, false
 	}
 	return true, true
+}
+
+// sameOrigin reports whether origin is that of a page this server itself
+// serves to a request with the given Host header.
+//
+// On loopback, admit has already checked the Host header against the
+// server's names. Beyond loopback it cannot, so a page on a DNS name that was
+// rebound to this server would pass for the server's own. There the header
+// only counts when it holds something that cannot be rebound: an IP address,
+// localhost, or the host name the server was started with.
+func (s *server) sameOrigin(origin, host string) bool {
+	if origin != "http://"+host {
+		return false
+	}
+	if s.hosts != nil {
+		return true
+	}
+	name := hostName(host)
+	return net.ParseIP(name) != nil || name == "localhost" ||
+		(s.cfg.Host != "" && name == strings.ToLower(s.cfg.Host))
+}
+
+// hostName returns the host of a Host header without port and brackets.
+func hostName(host string) string {
+	if name, _, err := net.SplitHostPort(host); err == nil {
+		return name
+	}
+	return strings.Trim(host, "[]")
 }
 
 // allowPreflight tells the browser which methods and headers the page's real
@@ -100,12 +131,34 @@ func allowedHosts(cfg Config) map[string]bool {
 	return hosts
 }
 
+// resolveTimeout bounds the lookup of the configured host name at startup.
+const resolveTimeout = 2 * time.Second
+
+// isLoopback reports whether the server, listening on host, can only be
+// reached from this machine: host is a loopback address, or a name whose
+// addresses are all loopback, such as localhost, localhost. or localhost6.
 func isLoopback(host string) bool {
-	if strings.EqualFold(host, "localhost") {
-		return true
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
 	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	if strings.EqualFold(host, "localhost") {
+		return true // without depending on a resolver
+	}
+	if host == "" {
+		return false // every interface
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), resolveTimeout)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil || len(addrs) == 0 {
+		return false
+	}
+	for _, addr := range addrs {
+		if !addr.IP.IsLoopback() {
+			return false
+		}
+	}
+	return true
 }
 
 // bracketIPv6 writes an IPv6 address the way URLs and Host headers do.

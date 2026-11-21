@@ -69,8 +69,11 @@ func TestUIResponsesCarryTheSecurityHeaders(t *testing.T) {
 		if got.Code != 200 {
 			t.Fatalf("%s: status = %d, want 200", path, got.Code)
 		}
-		if csp := got.Header().Get("Content-Security-Policy"); csp != "default-src 'self'; base-uri 'none'; form-action 'none'" {
+		if csp := got.Header().Get("Content-Security-Policy"); csp != "default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" {
 			t.Errorf("%s: Content-Security-Policy = %q", path, csp)
+		}
+		if cc := got.Header().Get("Cache-Control"); cc != "no-cache" {
+			t.Errorf("%s: Cache-Control = %q, want no-cache", path, cc)
 		}
 		if v := got.Header().Get("X-Content-Type-Options"); v != "nosniff" {
 			t.Errorf("%s: X-Content-Type-Options = %q, want nosniff", path, v)

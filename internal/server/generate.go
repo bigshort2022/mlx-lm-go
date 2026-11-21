@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -22,55 +23,27 @@ type job struct {
 	prompt func() ([]int32, error)
 }
 
-// job reads the fields that chat and text completions share.
-func (s *server) job(fields *reader) job {
-	fields.rejectUnsupported()
-	return job{
-		model:     s.model(fields),
-		stream:    fields.boolean("stream", false),
-		usage:     fields.includeUsage(),
-		stop:      fields.stop(),
-		maxTokens: s.maxTokens(fields),
-		sampling:  s.sampling(fields),
-	}
-}
-
-// run waits for the request's turn, generates the completion for j and writes
-// the response. Requests are served one at a time, in arrival order; one
-// whose client leaves while it waits is dropped before it costs anything.
-// Everything that touches the tokenizer, the template or the engine happens
-// inside the turn.
+// run generates the completion for j and writes the response.
 func (s *server) run(w http.ResponseWriter, r *http.Request, j job) {
-	if err := s.queue.acquire(r.Context()); err != nil {
-		return // the client has gone, so there is nobody to answer
-	}
-	defer s.queue.release()
-
-	prompt, err := j.prompt()
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	source := textSource{
-		deps:    s.deps,
-		request: engine.Request{Prompt: prompt, MaxTokens: j.maxTokens, Sampling: j.sampling},
-		stop:    j.stop,
-	}
 	out := newReply(j.chat, j.model)
 	if j.stream {
-		runStreamed(r.Context(), w, source, out, j.usage)
+		s.runStreamed(w, r, j, out)
 	} else {
-		runBuffered(r.Context(), w, source, out)
+		s.runBuffered(w, r, j, out)
 	}
 }
 
-// runBuffered answers with the whole completion in one JSON body.
-func runBuffered(ctx context.Context, w http.ResponseWriter, source textSource, out reply) {
+// runBuffered answers with the whole completion in one JSON body. The body is
+// written after generate has given the turn back, so a client that is slow to
+// take it delays nobody else.
+func (s *server) runBuffered(w http.ResponseWriter, r *http.Request, j job, out reply) {
 	var text strings.Builder
-	res, err := source.generate(ctx, func(piece string) { text.WriteString(piece) })
+	res, err := s.generate(r.Context(), j, func() {}, func(piece string) error {
+		text.WriteString(piece)
+		return nil
+	})
 	if err != nil {
-		// Also reached when the client hung up; the write then goes nowhere.
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeFailure(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, out.full(text.String(), res))
@@ -80,66 +53,105 @@ func runBuffered(ctx context.Context, w http.ResponseWriter, source textSource, 
 // then a final event carrying the finish reason and, if asked for, a usage
 // event. A failure after the headers have gone out is reported as an error
 // event, and the stream ends without the [DONE] marker.
-func runStreamed(ctx context.Context, w http.ResponseWriter, source textSource, out reply, usage bool) {
-	events := startEventStream(w)
-	res, err := source.generate(ctx, func(piece string) { events.send(out.chunk(piece, "")) })
-	if err != nil {
-		events.send(errorResponse{Error: err.Error()})
+func (s *server) runStreamed(w http.ResponseWriter, r *http.Request, j job, out reply) {
+	var events *eventStream
+	res, err := s.generate(r.Context(), j,
+		func() { events = startEventStream(w, s.writeTimeout) },
+		func(piece string) error { return events.send(out.chunk(piece, "")) },
+	)
+	if events == nil {
+		writeFailure(w, err) // refused before the stream began
 		return
 	}
-	events.send(out.chunk("", res.FinishReason))
-	if usage {
-		events.send(out.usageChunk(res))
+	if err != nil {
+		// Reaches the client unless the failure was the client's own.
+		_ = events.send(errorResponse{Error: err.Error()})
+		return
 	}
-	events.done()
+	_ = events.send(out.chunk("", res.FinishReason))
+	if j.usage {
+		_ = events.send(out.usageChunk(res))
+	}
+	_ = events.done()
 }
 
-// textSource generates the text of one completion.
-type textSource struct {
-	deps    Deps
-	request engine.Request
-	stop    []string
+// promptError is a failure to build the prompt, which is the client's doing.
+type promptError struct{ error }
+
+// writeFailure answers a request whose generation did not complete.
+func writeFailure(w http.ResponseWriter, err error) {
+	var badPrompt promptError
+	switch {
+	case errors.Is(err, errQueueFull):
+		w.Header().Set("Retry-After", "1")
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+	case errors.As(err, &badPrompt):
+		writeError(w, http.StatusBadRequest, err.Error())
+	default:
+		// Also reached when the client hung up; the write then goes nowhere.
+		writeError(w, http.StatusInternalServerError, err.Error())
+	}
 }
 
-// generate runs the engine and hands the generated text to onText in pieces,
-// as soon as each is known not to be part of a stop string. When a stop
-// string appears it cancels the engine and reports the finish reason "stop";
-// the token counts are still the engine's.
-func (t textSource) generate(ctx context.Context, onText func(piece string)) (engine.Result, error) {
+// generate takes the request's turn, builds the prompt and runs the engine.
+// Requests get their turn one at a time, in arrival order; everything that
+// touches the tokenizer, the template or the engine happens inside the turn,
+// and the turn ends when generate returns.
+//
+// begin is called once the prompt is ready and generation is about to start.
+// The generated text is then handed to onText in pieces, as soon as each is
+// known not to be part of a stop string. If onText fails, generation is
+// cancelled and generate returns that error. When a stop string appears,
+// generation is cancelled too and the result reports the finish reason
+// "stop"; the token counts are still the engine's.
+func (s *server) generate(ctx context.Context, j job, begin func(), onText func(piece string) error) (engine.Result, error) {
+	if err := s.queue.acquire(ctx); err != nil {
+		return engine.Result{}, err
+	}
+	defer s.queue.release()
+
+	prompt, err := j.prompt()
+	if err != nil {
+		return engine.Result{}, promptError{err}
+	}
+	begin()
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-
-	detok := t.deps.Tokenizer.NewDetokenizer()
-	matcher := newStopMatcher(t.stop)
-	stopped := false
+	detok := s.deps.Tokenizer.NewDetokenizer()
+	matcher := newStopMatcher(j.stop)
+	var (
+		stopped bool  // a stop string was completed
+		sinkErr error // onText failed
+	)
 	feed := func(piece string) {
+		if stopped || sinkErr != nil {
+			return
+		}
 		text, hit := matcher.add(piece)
 		if text != "" {
-			onText(text)
+			sinkErr = onText(text)
 		}
-		if hit {
-			stopped = true
+		stopped = hit
+		if stopped || sinkErr != nil {
 			cancel()
 		}
 	}
 
-	res, err := t.deps.Engine.Generate(ctx, t.request, func(token int32) {
-		if !stopped {
-			feed(detok.Add(token))
-		}
-	})
-	if !stopped {
-		if err != nil {
-			return res, err
-		}
+	req := engine.Request{Prompt: prompt, MaxTokens: j.maxTokens, Sampling: j.sampling}
+	res, err := s.deps.Engine.Generate(ctx, req, func(token int32) { feed(detok.Add(token)) })
+	if err == nil {
 		feed(detok.Flush())
+		if rest := matcher.flush(); rest != "" && !stopped && sinkErr == nil {
+			sinkErr = onText(rest)
+		}
 	}
-	if stopped {
+	switch {
+	case sinkErr != nil:
+		return res, sinkErr
+	case stopped:
 		res.FinishReason = "stop"
 		return res, nil
 	}
-	if rest := matcher.flush(); rest != "" {
-		onText(rest)
-	}
-	return res, nil
+	return res, err
 }

@@ -4,9 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
-
-	"github.com/bigshort2022/mlx-lm-go/internal/engine"
 )
 
 // defaultContextSize is the reference's default for the repetition, presence
@@ -76,6 +75,10 @@ type limit struct {
 func atLeast(bound float64) limit { return limit{lower: true, bound: bound} }
 func atMost(bound float64) limit  { return limit{bound: bound} }
 
+// float32Range keeps a number within what the engine's float32 fields hold.
+// Beyond it the conversion would hand the engine an infinity.
+var float32Range = []limit{atLeast(-math.MaxFloat32), atMost(math.MaxFloat32)}
+
 // check records a failure if v breaks one of the limits.
 func (r *reader) check(name string, v float64, limits []limit) {
 	for _, l := range limits {
@@ -103,20 +106,36 @@ func (r *reader) integer(name string, def int, limits ...limit) int {
 	return n
 }
 
-// number returns the named numeric field, or def when it is not given.
-func (r *reader) number(name string, def float32, limits ...limit) float32 {
+// number returns the named field as a float32, or def when it is not given.
+// kind is how the reference names the type: it takes most numbers as
+// "('float', 'int')" and a few as "float" only.
+func (r *reader) number(name, kind string, def float32, limits ...limit) float32 {
 	v, ok := r.raw(name)
 	if !ok {
 		return def
 	}
-	f, err := strconv.ParseFloat(string(v), 64)
-	if err != nil {
-		r.fail("%s must be of type ('float', 'int')", name)
+	f, ok := parseNumber(v)
+	if !ok {
+		r.fail("%s must be of type %s", name, kind)
 		return def
 	}
 	r.check(name, f, limits)
+	r.check(name, f, float32Range)
 	return float32(f)
 }
+
+// parseNumber parses a JSON number. One too large for a float64 comes back as
+// an infinity, for the range checks to reject.
+func parseNumber(raw json.RawMessage) (float64, bool) {
+	f, err := strconv.ParseFloat(string(raw), 64)
+	return f, err == nil || errors.Is(err, strconv.ErrRange)
+}
+
+// The reference's names for the number types it accepts.
+const (
+	floatOrInt = "('float', 'int')"
+	floatOnly  = "float"
+)
 
 // dict returns the named field if it is a JSON object, or nil when it is not
 // given.
@@ -188,19 +207,19 @@ func (r *reader) logitBias() map[int32]float32 {
 	if v == nil {
 		return nil
 	}
-	var entries map[string]float32
-	if err := json.Unmarshal(v, &entries); err != nil {
-		r.fail("logit_bias must be a dict of int to float")
-		return nil
-	}
+	var entries map[string]json.RawMessage
+	_ = json.Unmarshal(v, &entries) // dict has checked that v is an object
 	bias := make(map[int32]float32, len(entries))
-	for key, value := range entries {
+	for key, raw := range entries {
 		id, err := strconv.ParseInt(key, 10, 32)
-		if err != nil {
+		value, isNumber := parseNumber(raw)
+		if err != nil || !isNumber {
 			r.fail("logit_bias must be a dict of int to float")
 			return nil
 		}
-		bias[int32(id)] = value
+		r.check("logit_bias token ids", float64(id), []limit{atLeast(0)})
+		r.check("logit_bias values", value, float32Range)
+		bias[int32(id)] = float32(value)
 	}
 	return bias
 }
@@ -214,44 +233,40 @@ func (r *reader) seed() *uint64 {
 	return &seed
 }
 
-// unsupportedFields are request fields of the reference that this server does
-// not implement yet.
-var unsupportedFields = []string{
-	"adapters", "draft_model", "num_draft_tokens", "role_mapping", "tools",
-	"logprobs", "top_logprobs", "xtc_probability", "xtc_threshold",
-}
-
-// rejectUnsupported fails for an unsupported field that asks for something.
-// A value that leaves the feature off is accepted, so that clients which
-// always send, say, "logprobs": false keep working.
-func (r *reader) rejectUnsupported() {
-	for _, name := range unsupportedFields {
-		if v, ok := r.raw(name); ok && !isOff(v) {
-			r.fail("%s is not supported yet", name)
-		}
+// unsupported fails when a request asks for something this server does not
+// implement yet. A value that leaves the feature off is no such request, so
+// that clients which always send, say, "logprobs": false keep working.
+func (r *reader) unsupported(name string, asked bool) {
+	if asked {
+		r.fail("%s is not supported yet", name)
 	}
 }
 
-// isOff reports whether a JSON value is one that Python treats as false:
-// null, false, 0, "", [] or {}.
-func isOff(raw json.RawMessage) bool {
+// given reports whether a field holds a value that Python treats as true:
+// anything but null, false, 0, "", [] and {}. The reference switches the
+// features of its unvalidated fields on that.
+func (r *reader) given(name string) bool {
+	raw, ok := r.raw(name)
+	if !ok {
+		return false
+	}
 	var value any
 	if err := json.Unmarshal(raw, &value); err != nil {
-		return false
+		return true
 	}
 	switch v := value.(type) {
 	case bool:
-		return !v
+		return v
 	case float64:
-		return v == 0
+		return v != 0
 	case string:
-		return v == ""
+		return v != ""
 	case []any:
-		return len(v) == 0
+		return len(v) != 0
 	case map[string]any:
-		return len(v) == 0
+		return len(v) != 0
 	}
-	return value == nil
+	return true
 }
 
 // defaultModel is the reference's name for the model loaded at startup.
@@ -272,26 +287,54 @@ func (s *server) model(r *reader) string {
 // max_completion_tokens to max_tokens and falls back to --max-tokens.
 func (s *server) maxTokens(r *reader) int {
 	if _, ok := r.raw("max_completion_tokens"); ok {
-		return r.integer("max_completion_tokens", 0, atLeast(0))
+		return r.integer("max_completion_tokens", 0, atLeast(1))
 	}
-	return r.integer("max_tokens", s.cfg.MaxTokens, atLeast(0))
+	return r.integer("max_tokens", s.cfg.MaxTokens, atLeast(1))
 }
 
-// sampling reads the sampling fields. Fields the request leaves out take the
+// job reads and validates the fields that chat and text completions share.
+// Types, ranges and wording follow validate_model_parameters of mlx_lm.server
+// 0.32.2, and so does the order of the checks, which decides the message for
+// a request with several mistakes. Fields the request leaves out take the
 // server's defaults.
-func (s *server) sampling(r *reader) engine.Sampling {
-	return engine.Sampling{
-		Temperature:           r.number("temperature", s.cfg.Temperature, atLeast(0)),
-		TopP:                  r.number("top_p", s.cfg.TopP, atLeast(0), atMost(1)),
-		TopK:                  r.integer("top_k", s.cfg.TopK, atLeast(0)),
-		MinP:                  r.number("min_p", s.cfg.MinP, atLeast(0), atMost(1)),
-		RepetitionPenalty:     r.number("repetition_penalty", 0, atLeast(0)),
-		RepetitionContextSize: r.integer("repetition_context_size", defaultContextSize, atLeast(0)),
-		PresencePenalty:       r.number("presence_penalty", 0),
-		PresenceContextSize:   r.integer("presence_context_size", defaultContextSize, atLeast(0)),
-		FrequencyPenalty:      r.number("frequency_penalty", 0),
-		FrequencyContextSize:  r.integer("frequency_context_size", defaultContextSize, atLeast(0)),
-		LogitBias:             r.logitBias(),
-		Seed:                  r.seed(),
+func (s *server) job(r *reader) job {
+	var j job
+	j.stream = r.boolean("stream", false)
+	j.maxTokens = s.maxTokens(r)
+	j.sampling.Temperature = r.number("temperature", floatOrInt, s.cfg.Temperature, atLeast(0))
+	j.sampling.TopP = r.number("top_p", floatOrInt, s.cfg.TopP, atLeast(0), atMost(1))
+	j.sampling.TopK = r.integer("top_k", s.cfg.TopK, atLeast(0))
+	j.sampling.MinP = r.number("min_p", floatOrInt, s.cfg.MinP, atLeast(0), atMost(1))
+	draftTokens := r.integer("num_draft_tokens", 0, atLeast(0))
+	j.sampling.RepetitionPenalty = r.number("repetition_penalty", floatOrInt, 0, atLeast(0))
+	j.sampling.RepetitionContextSize = r.integer("repetition_context_size", defaultContextSize, atLeast(0))
+	j.sampling.PresencePenalty = r.number("presence_penalty", floatOrInt, 0)
+	j.sampling.PresenceContextSize = r.integer("presence_context_size", defaultContextSize, atLeast(0))
+	j.sampling.FrequencyPenalty = r.number("frequency_penalty", floatOrInt, 0)
+	j.sampling.FrequencyContextSize = r.integer("frequency_context_size", defaultContextSize, atLeast(0))
+	logprobs := r.boolean("logprobs", false)
+	topLogprobs := r.integer("top_logprobs", -1)
+	if topLogprobs != -1 { // -1 is the reference's "none", outside the range
+		r.check("top_logprobs", float64(topLogprobs), []limit{atLeast(0), atMost(11)})
 	}
+	xtcProbability := r.number("xtc_probability", floatOnly, 0, atLeast(0), atMost(1))
+	r.number("xtc_threshold", floatOnly, 0, atLeast(0), atMost(1)) // has no effect without a probability
+	j.model = s.model(r)
+	adapters := r.text("adapters", "")
+	j.sampling.Seed = r.seed()
+	j.sampling.LogitBias = r.logitBias()
+
+	// The reference does not validate these.
+	j.stop = r.stop()
+	j.usage = r.includeUsage()
+
+	r.unsupported("adapters", adapters != "")
+	r.unsupported("draft_model", r.given("draft_model"))
+	r.unsupported("num_draft_tokens", draftTokens != 0)
+	r.unsupported("role_mapping", r.given("role_mapping"))
+	r.unsupported("tools", r.given("tools"))
+	r.unsupported("logprobs", logprobs)
+	r.unsupported("top_logprobs", topLogprobs > 0)
+	r.unsupported("xtc_probability", xtcProbability > 0)
+	return j
 }

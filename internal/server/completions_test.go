@@ -80,7 +80,8 @@ func TestCompletionsStreamUsageChunk(t *testing.T) {
 		t.Fatalf("stream does not end with a usage event and [DONE]:\n%s", got.Body)
 	}
 	last := decodeCompletion(t, events[len(events)-2])
-	if last.Object != "text_completion" || len(last.Choices) != 0 || last.Usage == nil || last.Usage.CompletionTokens != 8 {
-		t.Fatalf("usage event = %s, want a text_completion without choices reporting 8 completion tokens", events[len(events)-2])
+	// The reference labels this event chat.completion on both endpoints.
+	if last.Object != "chat.completion" || len(last.Choices) != 0 || last.Usage == nil || last.Usage.CompletionTokens != 8 {
+		t.Fatalf("usage event = %s, want a chat.completion without choices reporting 8 completion tokens", events[len(events)-2])
 	}
 }

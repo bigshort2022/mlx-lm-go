@@ -11,6 +11,8 @@ type Engine interface {
 	// generated token, in order, and must not block for long. The
 	// end-of-sequence token is not emitted.
 	//
+	// emit is never called after Generate has returned.
+	//
 	// When ctx ends first, Generate returns ctx.Err() together with a Result
 	// holding the token counts reached so far.
 	Generate(ctx context.Context, req Request, emit func(token int32)) (Result, error)
