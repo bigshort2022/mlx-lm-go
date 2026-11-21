@@ -2,6 +2,8 @@ package tokenizer
 
 import (
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -119,6 +121,70 @@ func TestEncodeReadsInvalidUTF8AsReplacementCharacter(t *testing.T) {
 			got, want := tok.Encode("a\xffb\xe4\xbd"), tok.Encode("a\ufffdb\ufffd\ufffd")
 			if !slices.Equal(got, want) {
 				t.Errorf("Encode of invalid bytes = %v, want %v as for U+FFFD in their place", got, want)
+			}
+		})
+	}
+}
+
+// runsOfA returns a model whose tokens are runs of one to four "a" (ids 0 to
+// 3), merged in rank order by "a"+"a", "aa"+"a" and "aa"+"aa". In a long run
+// of "a" every pair starts out as a candidate of the same rank, and most
+// merges change what their neighbours could merge into.
+func runsOfA(tb testing.TB) *bpe {
+	tb.Helper()
+	model, err := newBPE(
+		map[string]int32{"a": 0, "aa": 1, "aaa": 2, "aaaa": 3},
+		[][2]string{{"a", "a"}, {"aa", "a"}, {"aa", "aa"}},
+	)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return model
+}
+
+// This runs without the Hugging Face cache and fails if candidates of equal
+// rank are not taken leftmost first, if a merged symbol is not queued again
+// with its new neighbours, or if the symbol after a merge is not relinked to
+// it. The expected ids come from the Python tokenizers library.
+func TestMergerTakesEqualRanksLeftmostFirst(t *testing.T) {
+	merger := merger{model: runsOfA(t)}
+	tests := []struct {
+		word string
+		want []int32
+	}{
+		{"aaa", []int32{2}},
+		{"aaaa", []int32{3}},
+		{"aaaaa", []int32{1, 2}},
+		{"aaaaaa", []int32{3, 1}},
+		{"aaaaaaa", []int32{3, 2}},
+	}
+	for _, tt := range tests {
+		if got := merger.appendPiece(nil, []rune(tt.word)); !slices.Equal(got, tt.want) {
+			t.Errorf("ids of %q = %v, want %v", tt.word, got, tt.want)
+		}
+	}
+}
+
+// BenchmarkEncodeLongWord encodes one unbroken run of "a", which is a single
+// piece that merges all the way down to "aaaa" tokens. Merging takes
+// O(n log n), so the two sizes should report nearly the same MB/s; a merge
+// loop gone quadratic shows as the larger size running at half the speed.
+//
+// It runs without the Hugging Face cache: the tokenizer is the tiny one, with
+// its added tokens and Qwen2.5's split pattern, given the runsOfA model.
+func BenchmarkEncodeLongWord(b *testing.B) {
+	tok := *loadTiny(b)
+	tok.bpe = runsOfA(b)
+
+	for _, size := range []int{100_000, 200_000} {
+		b.Run(strconv.Itoa(size), func(b *testing.B) {
+			word := strings.Repeat("a", size)
+			if got := len(tok.Encode(word)); got != size/4 {
+				b.Fatalf("Encode gave %d ids, want %d: the word did not merge as one piece", got, size/4)
+			}
+			b.SetBytes(int64(size))
+			for b.Loop() {
+				tok.Encode(word)
 			}
 		})
 	}

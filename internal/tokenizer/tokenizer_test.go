@@ -16,11 +16,11 @@ import (
 // so tests that use it run without the Hugging Face cache.
 const tinyDir = "testdata/tiny"
 
-func loadTiny(t *testing.T) *Tokenizer {
-	t.Helper()
+func loadTiny(tb testing.TB) *Tokenizer {
+	tb.Helper()
 	tok, err := Load(tinyDir)
 	if err != nil {
-		t.Fatalf("Load(%q) error: %v", tinyDir, err)
+		tb.Fatalf("Load(%q) error: %v", tinyDir, err)
 	}
 	return tok
 }
