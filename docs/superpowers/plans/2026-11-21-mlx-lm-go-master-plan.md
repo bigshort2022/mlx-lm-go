@@ -321,7 +321,7 @@ Adapters (LoRA), speculative decoding, batching, distributed inference (`mlx.lau
 | M0 toolchain | done |
 | M1 `mlx` bindings and inference thread | done, reviewed, review fixes in |
 | M2 tokenizer and chat template | done, reviewed, review fixes in. The template engine is an in-package interpreter; gonja was dropped because it rendered wrong prompts where Jinja2 raises. |
-| M3 `qwen2` generation | done, reviewed, review fixes in. Output equals mlx-lm 0.32.2 on MLX 0.32.4 token for token. |
+| M3 `qwen2` generation | done, reviewed, review fixes in. Greedy-decoding fixtures match mlx-lm 0.32.2 on MLX 0.32.4. |
 | M4 HTTP server and the binary | done, reviewed. Not yet attached to mlx-fleet as a slot. |
 | M5 front end | page and standalone build done in the unite4ai repository, on a local branch that is not pushed or deployed. The UI is embedded in the binary. Browser checks so far: headless Chromium only, against loopback pages. |
 | M6 `qwen3_5`, prompt cache, tools, logprobs | not started |

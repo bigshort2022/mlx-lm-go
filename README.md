@@ -1,6 +1,6 @@
 # mlx-lm-go
 
-A native Go server for running language models with [MLX](https://github.com/ml-explore/mlx) on Apple silicon. It speaks the same OpenAI-compatible HTTP API as Python's `mlx_lm.server`, loads the same `mlx-community` model directories, and ships as one binary with a chat page built in. There is no Python at run time.
+A native Go server for running language models with [MLX](https://github.com/ml-explore/mlx) on Apple silicon. It implements a subset of the OpenAI-compatible API exposed by Python's `mlx_lm.server`, loads supported `mlx-community` model directories, and ships as one binary with a chat page built in. There is no Python at run time.
 
 ## Status
 
@@ -10,7 +10,7 @@ This is early software. What works today:
 - `POST /v1/chat/completions` and `POST /v1/completions`, streamed or not, with stop strings, sampling controls, penalties and logit bias.
 - `GET /v1/models`, `GET /health`, and a chat page at `/`.
 
-With temperature 0 the output is the same, token for token, as mlx-lm 0.32.2 on a freshly started server. Decode speed is the same as Python's `generate` loop: both run the same MLX kernels.
+The Qwen2.5 test fixtures check greedy decoding against mlx-lm 0.32.2 on MLX 0.32.4. End-to-end performance parity has not been established.
 
 Not there yet:
 
@@ -19,7 +19,7 @@ Not there yet:
 - Tool calls, `logprobs`, adapters, speculative decoding, batching, distributed inference, and model downloads.
 - Linux and CUDA.
 
-A request or flag that needs something from the second list fails with an error that names it. Nothing is silently ignored.
+Known unsupported options such as `tools`, `logprobs`, and `--draft-model` return errors when requested. Unrecognized JSON fields are ignored.
 
 ## Install
 
@@ -54,7 +54,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
   -d '{"messages": [{"role": "user", "content": "Count from 1 to 5."}]}'
 ```
 
-Any OpenAI client works with `base_url` set to `http://127.0.0.1:8080/v1`.
+For clients using the chat or text completions API, set `base_url` to `http://127.0.0.1:8080/v1`.
 
 Generate once from the command line:
 
@@ -62,7 +62,7 @@ Generate once from the command line:
 bin/mlx-lm-go generate --model mlx-community/Qwen2.5-1.5B-Instruct-4bit --prompt "Count from 1 to 5."
 ```
 
-`bin/mlx-lm-go server --help` lists every flag. The flags have the names and defaults of `mlx_lm.server`, with one exception described next.
+`bin/mlx-lm-go server --help` lists supported flags and defaults, plus the Python server flags that this binary explicitly rejects.
 
 ## Calls from web pages
 
