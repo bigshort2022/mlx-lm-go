@@ -60,18 +60,17 @@ var listeningLine = regexp.MustCompile(`(?m)^listening on (http://\S+)$`)
 // test ends.
 func startServer(t *testing.T, flags ...string) *liveServer {
 	t.Helper()
+	needModel(t)
 	args := append([]string{"server", "--model", referenceModel, "--port", "0"}, flags...)
 	return startServing(t, func(ctx context.Context, stderr io.Writer) int {
 		return run(ctx, args, io.Discard, stderr)
 	})
 }
 
-// startServing runs command, which is to serve the reference model until its
-// context ends and return an exit code, and waits until it listens. The
-// server is shut down when the test ends.
+// startServing runs command until its context ends, waits until it listens,
+// and shuts it down when the test ends.
 func startServing(t *testing.T, command func(ctx context.Context, stderr io.Writer) int) *liveServer {
 	t.Helper()
-	needModel(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	exit := make(chan int, 1)
@@ -597,6 +596,7 @@ func TestServerReportsAChatTemplateItCannotParse(t *testing.T) {
 // hold its connection for ever. The server is given a short timeout here in
 // place of readHeaderTimeout.
 func TestServerClosesAConnectionThatStallsInARequestHeader(t *testing.T) {
+	needModel(t)
 	cfg, err := server.ParseFlags([]string{"--model", referenceModel, "--port", "0"})
 	if err != nil {
 		t.Fatal(err)
