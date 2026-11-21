@@ -114,6 +114,51 @@ func TestGatedDeltaUpdate(t *testing.T) {
 	}
 }
 
+func TestGatedDeltaUpdateChunkMatchesPython(t *testing.T) {
+	inScope(t, func() {
+		// mlx-lm 0.32.2 gated_delta_kernel_unpacked, verified against its
+		// packed kernel. These indices specifically detect the different
+		// reduction order in MLX 0.32.4's chunked primitive.
+		const length, hk, hv, dk, dv = 32, 16, 48, 128, 128
+		from := func(dtype DType, mul, mod, shift int, scale float32, shape ...int) *Array {
+			n := 1
+			for _, dim := range shape {
+				n *= dim
+			}
+			values := make([]float32, n)
+			for i := range values {
+				values[i] = float32(i*mul%mod-shift) * scale
+			}
+			return AsType(FromFloat32(values, shape...), dtype)
+		}
+		q := from(BFloat16, 7, 29, 14, 1.0/128, 1, length, hk, dk)
+		k := from(BFloat16, 11, 31, 15, 1.0/256, 1, length, hk, dk)
+		v := from(BFloat16, 3, 23, 11, 1.0/16, 1, length, hv, dv)
+		g := from(Float32, 5, 13, -17, 33.0/1024, 1, length, hv)
+		beta := from(BFloat16, 7, 17, -8, 1.0/32, 1, length, hv)
+		initial := from(Float32, 13, 37, 18, 1.0/4096, 1, hv, dv, dk)
+		y, state := GatedDeltaUpdate(q, k, v, g, beta, initial)
+		wantIndices := func(name string, a *Array, dtype DType, shape []int, indices []int, want []float32) {
+			t.Helper()
+			if a.DType() != dtype || !slices.Equal(a.Shape(), shape) {
+				t.Fatalf("%s: got %v %v, want %v %v", name, a.DType(), a.Shape(), dtype, shape)
+			}
+			got := AsType(a, Float32).Float32s()
+			for i, idx := range indices {
+				if got[idx] != want[i] {
+					t.Errorf("%s[%d]: got %.10g, want %.10g", name, idx, got[idx], want[i])
+				}
+			}
+		}
+		wantIndices("output", y, BFloat16, []int{1, length, hv, dv},
+			[]int{9855, 15179, 20020, 78257, 79806, 183397},
+			[]float32{-0.000957489013671875, 5.125999450683594e-05, 1.043081283569336e-05, -0.001953125, 0.003631591796875, 0.00384521484375})
+		wantIndices("state", state, Float32, []int{1, hv, dv, dk},
+			[]int{199441, 199472, 200465, 209311},
+			[]float32{-0.0265731792896986, -0.026573218405246735, 0.027947695925831795, -0.026537491008639336})
+	})
+}
+
 func wantDeltaValues(t *testing.T, name string, a *Array, dtype DType, shape []int, want []float32, stride int, tol float64) {
 	t.Helper()
 	if a.DType() != dtype || !slices.Equal(a.Shape(), shape) {
