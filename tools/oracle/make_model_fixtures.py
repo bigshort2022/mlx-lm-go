@@ -1,8 +1,10 @@
 """Generate model and sampler golden fixtures from Python mlx-lm.
 
-Run from the repository root with a Python environment that has mlx-lm 0.31.3:
+Run from the repository root with a Python whose MLX version equals the one the
+Go binary links (`mlx-lm-go version` prints it). GPU kernels change between MLX
+releases, so numeric goldens from another version do not match. With Homebrew:
 
-    python tools/oracle/make_model_fixtures.py
+    /opt/homebrew/opt/mlx-lm/libexec/bin/python tools/oracle/make_model_fixtures.py
 
 Writes:
   testdata/qwen2/generation.json      prompts, their token ids, step-0 top-50 logits,

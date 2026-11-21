@@ -14,12 +14,12 @@
 
 - Reference code, to port faithfully: `/Users/b33j_02/sandbox/mlx/.venv/lib/python3.13/site-packages/mlx_lm/` files `models/qwen2.py`, `models/base.py`, `models/cache.py` (`KVCache`), `models/rope_utils.py`, `models/activations.py`, `sample_utils.py`, `generate.py` (`generate_step`), `utils.py` (`load_model`, `load_config`). Quantized layers: `mlx/nn/layers/quantized.py` in the same site-packages.
 - Model on disk: `hub.Resolve("mlx-community/Qwen2.5-1.5B-Instruct-4bit")`. Read its `config.json` and list the tensor names in `model.safetensors` before designing.
-- Golden fixtures (made by `tools/oracle/make_model_fixtures.py`, Python mlx 0.31.2):
+- Golden fixtures (made by `tools/oracle/make_model_fixtures.py` with mlx-lm 0.32.2 on MLX 0.32.4, the MLX version the Go binary links):
   - `testdata/qwen2/layers.safetensors`: `input_ids` `[1,8]` and float32 `embed`, `l0_norm1`, `l0_attn`, `l0_norm2`, `l0_mlp`, `l0_out`, `final_norm`, `logits_last`.
   - `testdata/qwen2/generation.json`: five cases with `prompt_ids`, `top50_ids`, `top50_logits`, `greedy_ids` (ends at and includes the end-of-sequence token when one was produced within 64 tokens), `peak_memory_bytes`; `meta.eos_token_ids`.
   - `testdata/sampler/cases.json` and `cases.safetensors`: inputs `logits` `[1,32]`, `logprobs`, `history`, and one expected float32 array per case name.
 - The `mlx` package API is in `docs/superpowers/plans/2026-11-21-m1-mlx-bindings.md` and in `mlx/*.go`. All `mlx` calls must happen on one OS thread: in tests, call `runtime.LockOSThread()` at the top of each test or run the body through an `exec.Thread`.
-- Go links MLX 0.32.4 while the goldens come from 0.31.2, so tiny numeric differences are expected. Python computes in the weights' dtype (float16); do the same and convert to float32 only to compare.
+- The goldens must come from the MLX version the binary links. GPU `quantized_matmul` on float16 changed between MLX 0.31.2 and 0.32.4, enough to move first-layer attention by 0.035 and final logits by 0.38. Python computes in the weights' dtype (float16); do the same and convert to float32 only to compare.
 - Facts about the `mlx` package as built:
   - Streams and the random key are per OS thread. Every test that calls `mlx` must pin its thread (`runtime.LockOSThread()`, also inside each subtest) or run through an `exec.Thread`.
   - `Argmax`, `Argsort`, `ArgPartition` and `Categorical` return `uint32`; use `AsType(x, mlx.Int32)` before `Int32s()`.
