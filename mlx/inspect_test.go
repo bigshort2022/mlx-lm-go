@@ -1,9 +1,6 @@
 package mlx
 
-import (
-	"slices"
-	"testing"
-)
+import "testing"
 
 func TestFloat32sPanicsOnInt32Array(t *testing.T) {
 	pin(t)
@@ -77,15 +74,19 @@ func TestEvalComputesEveryArray(t *testing.T) {
 
 func TestAsyncEvalStartsComputingEveryArray(t *testing.T) {
 	pin(t)
+	ClearCache() // settles memory still being released by earlier work
 	err := Scoped(func() error {
-		a := Add(FromFloat32([]float32{1, 2}, 2), Float(1))
-		b := Add(FromInt32([]int32{1, 2}, 2), Int(1))
-		AsyncEval(a, b)
-		if got := a.Float32s(); !slices.Equal(got, []float32{2, 3}) {
-			t.Errorf("a.Float32s() = %v, want [2 3]", got)
+		before := ActiveMemory()
+		a := Zeros(Float32, 1024, 1024)
+		b := Zeros(Float32, 1024, 1024)
+		if lazy := ActiveMemory(); lazy >= before+4*mib {
+			t.Errorf("ActiveMemory() went from %d to %d before AsyncEval, want the arrays to be lazy", before, lazy)
 		}
-		if got := b.Int32s(); !slices.Equal(got, []int32{2, 3}) {
-			t.Errorf("b.Int32s() = %v, want [2 3]", got)
+		AsyncEval(a, b)
+		// Nothing here reads a or b, so only AsyncEval can have computed them.
+		synchronize()
+		if held := ActiveMemory(); held < before+8*mib {
+			t.Errorf("ActiveMemory() went from %d to %d after AsyncEval(a, b), want both 4 MiB arrays computed", before, held)
 		}
 		AsyncEval()
 		return nil

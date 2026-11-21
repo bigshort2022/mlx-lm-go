@@ -2,6 +2,10 @@
 //
 // MLX keeps per-thread state (streams, the random key), so everything that
 // touches package mlx must run on the same thread. A Thread is that thread.
+//
+// A process should have one Thread for MLX. Two would not make package mlx
+// run in parallel: its scope stack and its pending error are process-wide,
+// so only one thread may be inside the package at a time.
 package exec
 
 import (

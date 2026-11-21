@@ -130,6 +130,134 @@ func TestKeepAtOutermostScopeLeavesOwnershipWithCaller(t *testing.T) {
 	kept.Free()
 }
 
+func TestKeepSkipsNil(t *testing.T) {
+	pin(t)
+	var kept *Array
+	err := Scoped(func() error {
+		kept = FromFloat32([]float32{1, 2}, 2)
+		Keep(nil, kept)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer kept.Free()
+	if !kept.Valid() {
+		t.Error("the array passed to Keep after a nil was not kept")
+	}
+}
+
+// A caller that gets an error or a panic from the outermost Scoped never
+// receives the arrays kept for it, so Scoped must free them. The three tests
+// below differ only in how the scope fails.
+
+func TestScopedFreesArraysKeptForCallerWhenFnReturnsError(t *testing.T) {
+	pin(t)
+	failure := errors.New("from fn")
+	var kept *Array
+	err := Scoped(func() error {
+		kept = FromFloat32([]float32{1, 2}, 2)
+		Keep(kept)
+		return failure
+	})
+	if err != failure {
+		t.Fatalf("Scoped returned %v, want the error fn returned", err)
+	}
+	if kept.Valid() {
+		kept.Free()
+		t.Error("kept array is still valid after the outermost scope returned an error")
+	}
+}
+
+func TestScopedFreesArraysKeptForCallerWhenAnOperationFails(t *testing.T) {
+	pin(t)
+	var kept *Array
+	err := Scoped(func() error {
+		kept = FromFloat32([]float32{1, 2, 3, 4, 5, 6}, 2, 3)
+		Keep(kept)
+		Matmul(kept, kept)
+		return nil
+	})
+	if err == nil {
+		t.Fatal("Scoped returned nil, want the Matmul error")
+	}
+	if kept.Valid() {
+		kept.Free()
+		t.Error("kept array is still valid after the outermost scope ended with an MLX error")
+	}
+}
+
+func TestScopedFreesArraysKeptForCallerWhenFnPanics(t *testing.T) {
+	pin(t)
+	var kept *Array
+	func() {
+		defer func() {
+			if r := recover(); r != "boom" {
+				t.Errorf("recovered %v, want the original panic value \"boom\"", r)
+			}
+		}()
+		_ = Scoped(func() error {
+			kept = FromFloat32([]float32{1, 2}, 2)
+			Keep(kept)
+			panic("boom")
+		})
+	}()
+	if kept.Valid() {
+		kept.Free()
+		t.Error("kept array is still valid after the outermost scope ended with a panic")
+	}
+}
+
+func TestScopedFreesArraysKeptThroughInnerScopesWhenOutermostFails(t *testing.T) {
+	pin(t)
+	failure := errors.New("from fn")
+	var kept *Array
+	err := Scoped(func() error {
+		if err := Scoped(func() error {
+			kept = FromFloat32([]float32{1, 2}, 2)
+			Keep(kept)
+			return nil
+		}); err != nil {
+			return err
+		}
+		Keep(kept)
+		return failure
+	})
+	if err != failure {
+		t.Fatalf("Scoped returned %v, want the error fn returned", err)
+	}
+	if kept.Valid() {
+		kept.Free()
+		t.Error("array kept out of two scopes is still valid after the outermost one returned an error")
+	}
+}
+
+func TestFailedInnerScopeLeavesKeptArraysWithEnclosingScope(t *testing.T) {
+	pin(t)
+	var kept *Array
+	err := Scoped(func() error {
+		inner := Scoped(func() error {
+			kept = FromFloat32([]float32{1, 2}, 2)
+			Keep(kept)
+			return errors.New("inner failure")
+		})
+		if inner == nil {
+			t.Error("the inner scope returned nil, want its error")
+		}
+		if !kept.Valid() {
+			t.Error("array kept into the enclosing scope was freed when the inner scope failed")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept.Valid() {
+		kept.Free()
+		t.Error("array kept into the enclosing scope is still valid after that scope ended")
+	}
+}
+
 func TestArraysCreatedOutsideAnyScopeAreCallerOwned(t *testing.T) {
 	pin(t)
 	a := FromFloat32([]float32{1, 2}, 2)

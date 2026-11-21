@@ -11,6 +11,12 @@ import (
 // Array is a handle to an MLX array. An Array created inside Scoped belongs to
 // that scope; one created outside any scope belongs to the caller, who must
 // Free it.
+//
+// Arrays are lazy: an operation only records what to compute, and Eval,
+// AsyncEval, Float32s and Int32s compute it. A lazy array is bound to the OS
+// thread that built it, whose stream its operations run on. It must be
+// evaluated on that thread, before any other thread uses it and before that
+// thread ends. An evaluated array may be used from another thread.
 type Array struct {
 	c     C.mlx_array
 	owner *scope // the scope that frees the array; nil if the caller does
@@ -48,11 +54,21 @@ func (a *Array) Valid() bool {
 	return a.c.ctx != nil
 }
 
-// cInts converts Go ints to the C ints MLX takes for shapes and axes.
+// cInt converts a Go int to the C int MLX takes for sizes, axes and indices.
+// It panics with *Error if the value does not fit, rather than truncate it.
+func cInt(v int) C.int {
+	c := C.int(v)
+	if int(c) != v {
+		panic(&Error{Msg: fmt.Sprintf("%d does not fit in a C int", v)})
+	}
+	return c
+}
+
+// cInts converts a shape or a list of axes with cInt.
 func cInts(values []int) []C.int {
 	out := make([]C.int, len(values))
 	for i, v := range values {
-		out[i] = C.int(v)
+		out[i] = cInt(v)
 	}
 	return out
 }
@@ -67,9 +83,9 @@ func created(c C.mlx_array) *Array {
 }
 
 // fromData returns an array of the given shape and element type holding a
-// copy of the length elements at data. It panics with *Error unless the shape
-// holds exactly length elements, because MLX would read past the data.
-func fromData(data unsafe.Pointer, length int, shape []int, dtype C.mlx_dtype) *Array {
+// copy of data. It panics with *Error unless the shape holds exactly
+// len(data) elements, because MLX would read past the data.
+func fromData[T float32 | int32](data []T, shape []int, dtype C.mlx_dtype) *Array {
 	want := 1
 	for _, d := range shape {
 		if d < 0 {
@@ -77,25 +93,31 @@ func fromData(data unsafe.Pointer, length int, shape []int, dtype C.mlx_dtype) *
 		}
 		want *= d
 	}
-	if length != want {
-		panic(&Error{Msg: fmt.Sprintf("data has %d elements, shape %v holds %d", length, shape, want)})
+	if len(data) != want {
+		panic(&Error{Msg: fmt.Sprintf("data has %d elements, shape %v holds %d", len(data), shape, want)})
 	}
 	dims := cInts(shape)
-	return created(C.mlx_array_new_data(data, unsafe.SliceData(dims), C.int(len(dims)), dtype))
+	if len(data) == 0 {
+		return created(C.mlx_array_new_data(nil, unsafe.SliceData(dims), cInt(len(dims)), dtype))
+	}
+	// The argument is written as &data[0] so that cgo's pointer check looks at
+	// the slice alone. Given a bare unsafe.Pointer it would inspect the whole
+	// allocation the slice is part of and reject one that also holds pointers.
+	return created(C.mlx_array_new_data(unsafe.Pointer(&data[0]), unsafe.SliceData(dims), cInt(len(dims)), dtype))
 }
 
 // FromFloat32 returns a float32 array of the given shape holding a copy of
 // data. It panics with *Error unless data has exactly one element per element
 // of the shape.
 func FromFloat32(data []float32, shape ...int) *Array {
-	return fromData(unsafe.Pointer(unsafe.SliceData(data)), len(data), shape, C.MLX_FLOAT32)
+	return fromData(data, shape, C.MLX_FLOAT32)
 }
 
 // FromInt32 returns an int32 array of the given shape holding a copy of data.
 // It panics with *Error unless data has exactly one element per element of the
 // shape.
 func FromInt32(data []int32, shape ...int) *Array {
-	return fromData(unsafe.Pointer(unsafe.SliceData(data)), len(data), shape, C.MLX_INT32)
+	return fromData(data, shape, C.MLX_INT32)
 }
 
 // Float returns a zero-dimensional float32 array.
