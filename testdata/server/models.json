@@ -1,0 +1,38 @@
+{
+  "request": {
+    "method": "GET",
+    "path": "/v1/models",
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": [
+      [
+        "Server",
+        "BaseHTTP/0.6 Python/3.13.13"
+      ],
+      [
+        "Date",
+        "Sat, 21 Nov 2026 11:30:16 GMT"
+      ],
+      [
+        "Content-type",
+        "application/json"
+      ],
+      [
+        "Access-Control-Allow-Origin",
+        "*"
+      ],
+      [
+        "Access-Control-Allow-Methods",
+        "*"
+      ],
+      [
+        "Access-Control-Allow-Headers",
+        "*"
+      ]
+    ],
+    "body": "{\"object\": \"list\", \"data\": [{\"id\": \"mlx-community/Qwen2.5-3B-Instruct-4bit\", \"object\": \"model\", \"created\": 1795260616}, {\"id\": \"mlx-community/Qwen3.5-9B-MLX-4bit\", \"object\": \"model\", \"created\": 1795260616}, {\"id\": \"mlx-community/Qwen2.5-1.5B-Instruct-4bit\", \"object\": \"model\", \"created\": 1795260616}, {\"id\": \"mlx-community/Qwen3.8-27B-4bit\", \"object\": \"model\", \"created\": 1795260616}]}"
+  }
+}

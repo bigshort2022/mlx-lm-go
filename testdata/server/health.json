@@ -1,0 +1,38 @@
+{
+  "request": {
+    "method": "GET",
+    "path": "/health",
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": [
+      [
+        "Server",
+        "BaseHTTP/0.6 Python/3.13.13"
+      ],
+      [
+        "Date",
+        "Sat, 21 Nov 2026 11:30:16 GMT"
+      ],
+      [
+        "Content-type",
+        "application/json"
+      ],
+      [
+        "Access-Control-Allow-Origin",
+        "*"
+      ],
+      [
+        "Access-Control-Allow-Methods",
+        "*"
+      ],
+      [
+        "Access-Control-Allow-Headers",
+        "*"
+      ]
+    ],
+    "body": "{\"status\": \"ok\"}"
+  }
+}

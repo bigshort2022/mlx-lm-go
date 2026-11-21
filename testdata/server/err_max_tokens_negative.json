@@ -1,0 +1,21 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "Count from 1 to 5."
+        }
+      ],
+      "max_tokens": -1
+    }
+  },
+  "response": {
+    "connection_error": "RemoteDisconnected: Remote end closed connection without response"
+  }
+}

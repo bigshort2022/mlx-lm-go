@@ -1,0 +1,19 @@
+{
+  "repo": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+  "snapshot": "8b403126fc14f14cfc99bb4cfa72ecbc129ea677",
+  "transformers": "5.7.0",
+  "tokenizers": "0.22.2",
+  "jinja2": "3.1.6",
+  "nfc_changed": 2,
+  "special_tokens": {
+    "bos_token": null,
+    "bos_token_id": null,
+    "eos_token": "<|im_end|>",
+    "eos_token_id": 151645,
+    "pad_token": "<|endoftext|>",
+    "pad_token_id": 151643,
+    "unk_token": null,
+    "unk_token_id": null
+  },
+  "vocab_size": 151665
+}

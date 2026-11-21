@@ -1,0 +1,72 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "What is the weather in Paris? Use the tool."
+        }
+      ],
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "description": "Get the current weather for a city.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          }
+        }
+      ],
+      "max_tokens": 48
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": [
+      [
+        "Server",
+        "BaseHTTP/0.6 Python/3.13.13"
+      ],
+      [
+        "Date",
+        "Sat, 21 Nov 2026 11:30:18 GMT"
+      ],
+      [
+        "Content-type",
+        "application/json"
+      ],
+      [
+        "Access-Control-Allow-Origin",
+        "*"
+      ],
+      [
+        "Access-Control-Allow-Methods",
+        "*"
+      ],
+      [
+        "Access-Control-Allow-Headers",
+        "*"
+      ],
+      [
+        "Content-Length",
+        "600"
+      ]
+    ],
+    "body": "{\"id\": \"chatcmpl-0f683a42-9406-4a31-8eb0-225126a85a3d\", \"system_fingerprint\": \"0.31.3-0.31.2-macOS-26.4.1-arm64-arm-64bit-Mach-O-applegpu_g16s\", \"object\": \"chat.completion\", \"model\": \"default_model\", \"created\": 1795260618, \"choices\": [{\"index\": 0, \"finish_reason\": \"tool_calls\", \"message\": {\"role\": \"assistant\", \"tool_calls\": [{\"function\": {\"name\": \"get_weather\", \"arguments\": \"{\\\"city\\\": \\\"Paris\\\"}\"}, \"type\": \"function\", \"id\": \"b42b419f-2e04-42ef-97d4-b7c01d2b3870\"}]}}], \"usage\": {\"prompt_tokens\": 177, \"completion_tokens\": 20, \"total_tokens\": 197, \"prompt_tokens_details\": {\"cached_tokens\": 18}}}"
+  }
+}
