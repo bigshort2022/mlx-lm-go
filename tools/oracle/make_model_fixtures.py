@@ -178,25 +178,26 @@ def sampler_fixtures():
             f"repetition_{penalty}_{ctx}",
             "repetition_penalty",
             {"penalty": penalty, "context_size": ctx},
-            make_repetition_penalty(penalty, ctx)(history, logits),
+            # The reference processors write into their argument, so each case gets a copy.
+            make_repetition_penalty(penalty, ctx)(history, logits + 0),
         )
     for penalty, ctx in ((0.5, 20), (1.5, 4)):
         add(
             f"presence_{penalty}_{ctx}",
             "presence_penalty",
             {"penalty": penalty, "context_size": ctx},
-            make_presence_penalty(penalty, ctx)(history, logits),
+            make_presence_penalty(penalty, ctx)(history, logits + 0),
         )
     for penalty, ctx in ((0.5, 20), (1.5, 4)):
         add(
             f"frequency_{penalty}_{ctx}",
             "frequency_penalty",
             {"penalty": penalty, "context_size": ctx},
-            make_frequency_penalty(penalty, ctx)(history, logits),
+            make_frequency_penalty(penalty, ctx)(history, logits + 0),
         )
     bias = {"0": -100.0, "7": 2.5, "31": 10.0}
     processors = make_logits_processors(logit_bias={int(k): v for k, v in bias.items()})
-    biased = logits
+    biased = logits + 0
     for processor in processors:
         biased = processor(history, biased)
     add("logit_bias", "logit_bias", {"logit_bias": bias}, biased)
