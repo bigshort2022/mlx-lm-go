@@ -14,46 +14,59 @@ type serverTokenizer struct{ *tokenizer.Tokenizer }
 
 var _ server.Tokenizer = serverTokenizer{}
 
-func (t serverTokenizer) NewDetokenizer() server.Detokenizer { return newDetokenizer(t.Tokenizer) }
-
-// detokenizer turns the tokens of one generation into text in the pieces of
-// the reference's BPEStreamingDetokenizer, which differ from a plain decode in
-// two ways. The token that is a single space is held back until the token
-// after it, so that " 2" arrives as one piece; the server drops whole pieces
-// when it meets a stop string. And one space at the very start of the text is
-// dropped.
-type detokenizer struct {
-	stream   *tokenizer.Stream
-	space    int32  // the token that is a single space
-	hasSpace bool   // the vocabulary has such a token
-	held     string // decoded text not returned yet
-	started  bool   // some text has been returned
+func (t serverTokenizer) NewDetokenizer() server.Detokenizer {
+	return newBPEStreamingDetokenizer(t.Tokenizer)
 }
 
-func newDetokenizer(t *tokenizer.Tokenizer) *detokenizer {
-	d := &detokenizer{stream: t.NewStream()}
+// bpeStreamingDetokenizer turns the tokens of one generation into text. It is
+// a port of BPEStreamingDetokenizer in mlx_lm/tokenizer_utils.py of mlx-lm
+// 0.32.2 and returns the same pieces, so that streams, stop strings and
+// completions come out as they do from mlx_lm.server. It differs from
+// decoding one token after another in three ways:
+//
+//   - The token that is a single space is held back until the token after
+//     it, so that " 3" arrives as one piece. The server drops whole pieces
+//     when it meets a stop string, which is why "1, 2, 3" stopped at "3"
+//     ends as "1, 2," and not as "1, 2, ".
+//   - One space at the very start of the text is dropped: the tokens of
+//     " 4, 5, 6" yield "4, 5, 6".
+//   - Tokens are held back as long as their text ends in U+FFFD, which is
+//     how the text of a character with bytes still to come ends.
+type bpeStreamingDetokenizer struct {
+	tokenizer *tokenizer.Tokenizer
+	space     int32   // the token that is a single space
+	hasSpace  bool    // the vocabulary has such a token
+	unflushed []int32 // the tokens whose text has not been returned yet
+	started   bool    // some text has been returned
+}
+
+func newBPEStreamingDetokenizer(t *tokenizer.Tokenizer) *bpeStreamingDetokenizer {
+	d := &bpeStreamingDetokenizer{tokenizer: t}
 	d.space, d.hasSpace = t.TokenID("Ġ") // a space in the byte-level alphabet
 	return d
 }
 
-// Add consumes one token and returns the text that is now complete.
-func (d *detokenizer) Add(token int32) string {
-	d.held += d.stream.Add(token)
-	if d.hasSpace && token == d.space {
+// Add consumes one token and returns the text that is now complete:
+// add_token of the reference.
+func (d *bpeStreamingDetokenizer) Add(token int32) string {
+	d.unflushed = append(d.unflushed, token)
+	text := d.tokenizer.Decode(d.unflushed)
+	if strings.HasSuffix(text, "\ufffd") || (d.hasSpace && token == d.space) {
 		return ""
 	}
-	return d.release()
+	return d.flush(text)
 }
 
-// Flush returns the text still held back once generation has ended.
-func (d *detokenizer) Flush() string {
-	d.held += d.stream.Flush()
-	return d.release()
+// Flush returns the text still held back once generation has ended: finalize
+// of the reference.
+func (d *bpeStreamingDetokenizer) Flush() string {
+	return d.flush(d.tokenizer.Decode(d.unflushed))
 }
 
-func (d *detokenizer) release() string {
-	text := d.held
-	d.held = ""
+// flush returns text, which is that of the unflushed tokens, without the
+// space the reference trims: _maybe_trim_space.
+func (d *bpeStreamingDetokenizer) flush(text string) string {
+	d.unflushed = d.unflushed[:0]
 	if !d.started {
 		text = strings.TrimPrefix(text, " ")
 		d.started = text != ""

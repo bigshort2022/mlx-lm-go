@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"text/tabwriter"
 	"time"
 
 	"github.com/bigshort2022/mlx-lm-go/internal/chattemplate"
@@ -16,35 +17,39 @@ import (
 
 // generateFlags are the settings of the generate command.
 type generateFlags struct {
-	model       string
-	prompt      string
-	system      string // "" means no system message
-	maxTokens   int
-	temperature float32
-	// templateArgs is a JSON object of extra template variables.
-	templateArgs json.RawMessage
+	model        string
+	prompt       string
+	system       string // "" means no system message
+	maxTokens    int
+	temperature  float32
+	templateArgs string // a JSON object of extra template variables
 }
 
-// parseGenerateFlags parses the flags of the generate command.
-func parseGenerateFlags(args []string) (generateFlags, error) {
-	var f generateFlags
-	templateArgs := "{}"
+// generateFlagSet defines the flags of the generate command, which fill f.
+func generateFlagSet(f *generateFlags) *flag.FlagSet {
 	fs := flag.NewFlagSet("generate", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&f.model, "model", "", "path or Hugging Face repository of the model")
 	fs.StringVar(&f.prompt, "prompt", "", "the user message")
 	fs.StringVar(&f.system, "system", "", "the system message")
 	fs.IntVar(&f.maxTokens, "max-tokens", 100, "maximum number of tokens to generate")
-	fs.Func("temp", "sampling temperature, 0 picks the likeliest token", func(v string) error {
+	fs.Func("temp", "sampling temperature; 0, the default, picks the likeliest token", func(v string) error {
 		temperature, err := strconv.ParseFloat(v, 32)
 		f.temperature = float32(temperature)
 		return err
 	})
-	fs.StringVar(&templateArgs, "chat-template-args", templateArgs, "JSON object of arguments for the chat template")
+	fs.StringVar(&f.templateArgs, "chat-template-args", "{}", "JSON object of arguments for the chat template")
+	return fs
+}
+
+// parseGenerateFlags parses the flags of the generate command. It returns
+// flag.ErrHelp when the arguments ask for help.
+func parseGenerateFlags(args []string) (generateFlags, error) {
+	var f generateFlags
+	fs := generateFlagSet(&f)
 	if err := fs.Parse(args); err != nil {
 		return generateFlags{}, err
 	}
-	f.templateArgs = json.RawMessage(templateArgs)
 	var object map[string]json.RawMessage
 	switch {
 	case fs.NArg() > 0:
@@ -55,16 +60,35 @@ func parseGenerateFlags(args []string) (generateFlags, error) {
 		return generateFlags{}, errors.New("--prompt is required")
 	case f.temperature < 0:
 		return generateFlags{}, errors.New("--temp must not be negative")
-	case json.Unmarshal(f.templateArgs, &object) != nil || object == nil:
+	case json.Unmarshal([]byte(f.templateArgs), &object) != nil || object == nil:
 		return generateFlags{}, errors.New("--chat-template-args must be a JSON object")
 	}
 	return f, nil
+}
+
+// generateUsage writes what generate --help prints: the flags, each with its
+// default if it has one.
+func generateUsage(w io.Writer) {
+	fmt.Fprint(w, "usage: mlx-lm-go generate --model <dir or repo id> --prompt <text> [flags]\n\nFlags:\n")
+	table := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	generateFlagSet(new(generateFlags)).VisitAll(func(f *flag.Flag) {
+		line := "  --" + f.Name + "\t" + f.Usage
+		if f.DefValue != "" {
+			line += " (default " + f.DefValue + ")"
+		}
+		fmt.Fprintln(table, line)
+	})
+	table.Flush()
 }
 
 // runGenerate answers one prompt on stdout and reports the token counts and
 // the generation speed on stderr.
 func runGenerate(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	f, err := parseGenerateFlags(args)
+	if errors.Is(err, flag.ErrHelp) {
+		generateUsage(stdout)
+		return exitOK
+	}
 	if err != nil {
 		return usageError(stderr, "generate: "+err.Error())
 	}
@@ -96,7 +120,11 @@ func generateText(ctx context.Context, f generateFlags, stdout, stderr io.Writer
 	if err != nil {
 		return err
 	}
-	prompt, err := m.template.Render(chattemplate.Input{Messages: messages, Kwargs: f.templateArgs, AddGenerationPrompt: true})
+	prompt, err := m.template.Render(chattemplate.Input{
+		Messages:            messages,
+		Kwargs:              json.RawMessage(f.templateArgs),
+		AddGenerationPrompt: true,
+	})
 	if err != nil {
 		return err
 	}
@@ -114,7 +142,7 @@ func generateText(ctx context.Context, f generateFlags, stdout, stderr io.Writer
 			cancel(err)
 		}
 	}
-	detok := newDetokenizer(m.tokenizer)
+	detok := newBPEStreamingDetokenizer(m.tokenizer)
 	req := engine.Request{
 		Prompt:    m.tokenizer.Encode(prompt),
 		MaxTokens: f.maxTokens,

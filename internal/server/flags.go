@@ -9,24 +9,35 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 )
 
 // logLevels are the values --log-level accepts, as in mlx_lm.server.
 var logLevels = []string{"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 
-// ParseFlags parses mlx_lm.server-compatible flags (without the program name).
-func ParseFlags(args []string) (Config, error) {
-	cfg := Config{
-		Host:            "127.0.0.1",
-		Port:            8080,
-		LogLevel:        "INFO",
-		TopP:            1.0,
-		MaxTokens:       512,
-		PrefillStepSize: 2048,
-	}
-	templateArgs := "{}"
+// flagSet is the flag set of the server together with what parsing fills.
+type flagSet struct {
+	*flag.FlagSet
+	cfg          Config
+	templateArgs string  // value of --chat-template-args
+	unsupported  *string // the first unsupported flag that was given, or ""
+}
 
-	fs := flag.NewFlagSet("mlx-lm-go", flag.ContinueOnError)
+// newFlagSet defines the flags of mlx_lm.server with their defaults.
+func newFlagSet() *flagSet {
+	f := &flagSet{
+		FlagSet: flag.NewFlagSet("mlx-lm-go", flag.ContinueOnError),
+		cfg: Config{
+			Host:            "127.0.0.1",
+			Port:            8080,
+			LogLevel:        "INFO",
+			TopP:            1.0,
+			MaxTokens:       512,
+			PrefillStepSize: 2048,
+		},
+		templateArgs: "{}",
+	}
+	fs, cfg := f.FlagSet, &f.cfg
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&cfg.Model, "model", "", "path or Hugging Face repository of the model to serve")
 	fs.StringVar(&cfg.Host, "host", cfg.Host, "host to listen on")
@@ -37,19 +48,26 @@ func ParseFlags(args []string) (Config, error) {
 	})
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "logging level: "+strings.Join(logLevels, ", "))
 	fs.StringVar(&cfg.ChatTemplate, "chat-template", "", "chat template to use instead of the model's")
-	fs.StringVar(&templateArgs, "chat-template-args", templateArgs, "JSON object of default arguments for the chat template")
-	float32Var(fs, &cfg.Temperature, "temp", "default sampling temperature")
-	float32Var(fs, &cfg.TopP, "top-p", "default nucleus sampling top-p")
+	fs.StringVar(&f.templateArgs, "chat-template-args", f.templateArgs, "JSON object of default arguments for the chat template")
+	fs.Var((*float32Value)(&cfg.Temperature), "temp", "default sampling temperature")
+	fs.Var((*float32Value)(&cfg.TopP), "top-p", "default nucleus sampling top-p")
 	fs.IntVar(&cfg.TopK, "top-k", cfg.TopK, "default top-k sampling, 0 disables it")
-	float32Var(fs, &cfg.MinP, "min-p", "default min-p sampling, 0 disables it")
+	fs.Var((*float32Value)(&cfg.MinP), "min-p", "default min-p sampling, 0 disables it")
 	fs.IntVar(&cfg.MaxTokens, "max-tokens", cfg.MaxTokens, "default maximum number of tokens to generate")
 	fs.IntVar(&cfg.PrefillStepSize, "prefill-step-size", cfg.PrefillStepSize, "number of prompt tokens processed per step")
-	unsupported := rejectUnsupported(fs)
+	f.unsupported = rejectUnsupported(fs)
+	return f
+}
 
+// ParseFlags parses mlx_lm.server-compatible flags (without the program name).
+// It returns flag.ErrHelp when the arguments ask for help.
+func ParseFlags(args []string) (Config, error) {
+	fs := newFlagSet()
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
-	cfg.ChatTemplateArgs = json.RawMessage(templateArgs)
+	cfg, unsupported := fs.cfg, fs.unsupported
+	cfg.ChatTemplateArgs = json.RawMessage(fs.templateArgs)
 	switch {
 	case *unsupported != "":
 		return Config{}, fmt.Errorf("--%s is not supported yet", *unsupported)
@@ -82,17 +100,45 @@ func isJSONObject(raw json.RawMessage) bool {
 	return json.Unmarshal(raw, &object) == nil && object != nil
 }
 
-// float32Var registers a flag that parses its value into *dst, which keeps its
-// current value as the default.
-func float32Var(fs *flag.FlagSet, dst *float32, name, usage string) {
-	fs.Func(name, usage, func(v string) error {
-		f, err := strconv.ParseFloat(v, 32)
-		if err != nil {
-			return err
+// Usage writes the flags ParseFlags accepts to w, each with its default if
+// it has one, and then the flags of mlx_lm.server that are not supported.
+func Usage(w io.Writer) {
+	var unsupported []string
+	table := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(table, "Flags:")
+	newFlagSet().VisitAll(func(f *flag.Flag) {
+		if slices.Contains(unsupportedValueFlags, f.Name) || slices.Contains(unsupportedSwitches, f.Name) {
+			unsupported = append(unsupported, f.Name)
+			return
 		}
-		*dst = float32(f)
-		return nil
+		line := "  --" + f.Name + "\t" + f.Usage
+		if f.DefValue != "" {
+			line += " (default " + f.DefValue + ")"
+		}
+		fmt.Fprintln(table, line)
 	})
+	table.Flush()
+
+	fmt.Fprintln(w, "\nNot supported yet (flags of mlx_lm.server):")
+	for _, name := range unsupported {
+		fmt.Fprintln(w, "  --"+name)
+	}
+}
+
+// float32Value is a float32 flag. Its current value is the flag's default.
+type float32Value float32
+
+func (f *float32Value) Set(v string) error {
+	parsed, err := strconv.ParseFloat(v, 32)
+	if err != nil {
+		return err
+	}
+	*f = float32Value(parsed)
+	return nil
+}
+
+func (f *float32Value) String() string {
+	return strconv.FormatFloat(float64(*f), 'g', -1, 32)
 }
 
 // Flags of mlx_lm.server that this server recognises only to reject them with

@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bigshort2022/mlx-lm-go/internal/server"
 	"github.com/bigshort2022/mlx-lm-go/internal/webui"
 )
 
@@ -59,13 +60,23 @@ var listeningLine = regexp.MustCompile(`(?m)^listening on (http://\S+)$`)
 // test ends.
 func startServer(t *testing.T, flags ...string) *liveServer {
 	t.Helper()
+	args := append([]string{"server", "--model", referenceModel, "--port", "0"}, flags...)
+	return startServing(t, func(ctx context.Context, stderr io.Writer) int {
+		return run(ctx, args, io.Discard, stderr)
+	})
+}
+
+// startServing runs command, which is to serve the reference model until its
+// context ends and return an exit code, and waits until it listens. The
+// server is shut down when the test ends.
+func startServing(t *testing.T, command func(ctx context.Context, stderr io.Writer) int) *liveServer {
+	t.Helper()
 	needModel(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	exit := make(chan int, 1)
 	s := &liveServer{stderr: &output{}, cancel: cancel, exit: exit}
-	args := append([]string{"server", "--model", referenceModel, "--port", "0"}, flags...)
-	go func() { exit <- run(ctx, args, io.Discard, s.stderr) }()
+	go func() { exit <- command(ctx, s.stderr) }()
 	t.Cleanup(func() {
 		cancel()
 		select {
@@ -579,5 +590,38 @@ func TestServerReportsAChatTemplateItCannotParse(t *testing.T) {
 	}
 	if !strings.HasPrefix(stderr.String(), "mlx-lm-go: --chat-template: ") {
 		t.Errorf("stderr does not blame the --chat-template flag:\n%s", &stderr)
+	}
+}
+
+// A client that stalls in the middle of a request header would otherwise
+// hold its connection for ever. The server is given a short timeout here in
+// place of readHeaderTimeout.
+func TestServerClosesAConnectionThatStallsInARequestHeader(t *testing.T) {
+	cfg, err := server.ParseFlags([]string{"--model", referenceModel, "--port", "0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := startServing(t, func(ctx context.Context, stderr io.Writer) int {
+		if err := serve(ctx, cfg, stderr, 100*time.Millisecond); err != nil {
+			return failure(stderr, err)
+		}
+		return exitOK
+	})
+
+	conn, err := net.Dial("tcp", strings.TrimPrefix(s.url, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := io.WriteString(conn, "GET /hea"); err != nil {
+		t.Fatal(err)
+	}
+	// ReadAll returns without an error once the server has closed the
+	// connection, and with one when the deadline passes first.
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadAll(conn); err != nil {
+		t.Errorf("the server kept the stalled connection open: %v", err)
 	}
 }

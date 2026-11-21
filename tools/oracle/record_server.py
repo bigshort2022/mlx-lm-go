@@ -1,8 +1,8 @@
 """Record real HTTP exchanges from Python mlx_lm.server as golden fixtures.
 
-Run from the repository root with a Python environment that has mlx-lm 0.31.3:
+Run from the repository root with a Python environment that has mlx-lm 0.32.2:
 
-    python tools/oracle/record_server.py
+    /opt/homebrew/opt/mlx-lm/libexec/bin/python tools/oracle/record_server.py
 
 It starts mlx_lm.server on a spare port with a small model from the Hugging
 Face cache, replays a fixed list of requests, and writes one file per exchange

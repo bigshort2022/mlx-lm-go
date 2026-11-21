@@ -130,3 +130,79 @@ func TestParseFlagsAllowedOriginsIgnoresEmptyEntries(t *testing.T) {
 		t.Fatalf("AllowedOrigins = %q, want %q", cfg.AllowedOrigins, want)
 	}
 }
+
+// usageSection returns the lines of one section of Usage, which begins with
+// the given heading and ends with a blank line or the end of the text.
+func usageSection(t *testing.T, usage, heading string) []string {
+	t.Helper()
+	_, rest, found := strings.Cut(usage, heading+"\n")
+	if !found {
+		t.Fatalf("Usage has no line %q:\n%s", heading, usage)
+	}
+	section, _, _ := strings.Cut(rest, "\n\n")
+	return strings.Split(strings.TrimSuffix(section, "\n"), "\n")
+}
+
+func TestUsageListsEverySupportedFlagWithItsDefault(t *testing.T) {
+	var out strings.Builder
+	Usage(&out)
+
+	defaults := map[string]string{ // "" means the flag has no default
+		"--allowed-origins":    "",
+		"--chat-template":      "",
+		"--chat-template-args": "{}",
+		"--host":               "127.0.0.1",
+		"--log-level":          "INFO",
+		"--max-tokens":         "512",
+		"--min-p":              "0",
+		"--model":              "",
+		"--port":               "8080",
+		"--prefill-step-size":  "2048",
+		"--temp":               "0",
+		"--top-k":              "0",
+		"--top-p":              "1",
+	}
+	lines := usageSection(t, out.String(), "Flags:")
+	if len(lines) != len(defaults) {
+		t.Errorf("Usage lists %d flags, want %d:\n%s", len(lines), len(defaults), out.String())
+	}
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			t.Errorf("line %q does not describe its flag", line)
+			continue
+		}
+		name := fields[0]
+		def, ok := defaults[name]
+		switch {
+		case !ok:
+			t.Errorf("Usage lists %s, which is not a supported flag", name)
+		case def == "" && strings.Contains(line, "(default"):
+			t.Errorf("line %q gives a default, want none", line)
+		case def != "" && !strings.HasSuffix(line, "(default "+def+")"):
+			t.Errorf("line %q does not end with (default %s)", line, def)
+		}
+		delete(defaults, name)
+	}
+	for name := range defaults {
+		t.Errorf("Usage does not list %s", name)
+	}
+}
+
+func TestUsageListsTheUnsupportedFlagsApart(t *testing.T) {
+	var out strings.Builder
+	Usage(&out)
+
+	want := []string{
+		"--adapter-path", "--decode-concurrency", "--draft-model", "--num-draft-tokens", "--pipeline",
+		"--prompt-cache-bytes", "--prompt-cache-size", "--prompt-concurrency", "--trust-remote-code",
+		"--use-default-chat-template",
+	}
+	var got []string
+	for _, line := range usageSection(t, out.String(), "Not supported yet (flags of mlx_lm.server):") {
+		got = append(got, strings.TrimSpace(line))
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("unsupported flags = %q, want %q", got, want)
+	}
+}

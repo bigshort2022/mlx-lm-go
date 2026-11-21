@@ -38,8 +38,51 @@ func TestUsageErrorsExitWith2AndExplain(t *testing.T) {
 			if !strings.Contains(stderr, tt.reason) {
 				t.Errorf("stderr does not give the reason %q:\n%s", tt.reason, stderr)
 			}
-			if !strings.Contains(stderr, "usage: mlx-lm-go ") {
-				t.Errorf("stderr has no usage hint:\n%s", stderr)
+			if !strings.Contains(stderr, "usage: mlx-lm-go ") || !strings.Contains(stderr, "mlx-lm-go --help") {
+				t.Errorf("stderr has no usage hint that points to --help:\n%s", stderr)
+			}
+		})
+	}
+}
+
+func TestHelpPrintsUsageAndExitsWith0(t *testing.T) {
+	top := []string{
+		"usage: mlx-lm-go <command> [flags]\n",
+		"  server ", "  generate ", "  version ",
+		"mlx-lm-go server --help", "mlx-lm-go generate --help",
+	}
+	server := []string{
+		"usage: mlx-lm-go server --model <dir or repo id> [flags]\n",
+		"\nFlags:\n", "  --model ", "  --port ", "(default 8080)", "  --temp ",
+		"\nNot supported yet (flags of mlx_lm.server):\n", "  --adapter-path\n",
+	}
+	generate := []string{
+		"usage: mlx-lm-go generate --model <dir or repo id> --prompt <text> [flags]\n",
+		"\nFlags:\n", "  --model ", "  --prompt ", "  --system ", "  --max-tokens ", "(default 100)",
+		"  --temp ", "  --chat-template-args ", "(default {})",
+	}
+	tests := []struct {
+		args  []string
+		wants []string
+	}{
+		{[]string{"--help"}, top},
+		{[]string{"-h"}, top},
+		{[]string{"server", "--help"}, server},
+		{[]string{"server", "-h"}, server},
+		{[]string{"server", "--model", "m", "--help"}, server},
+		{[]string{"generate", "--help"}, generate},
+		{[]string{"generate", "-h"}, generate},
+	}
+	for _, tt := range tests {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			code, stdout, stderr := runCommand(t, tt.args...)
+			if code != 0 || stderr != "" {
+				t.Errorf("exit code = %d, stderr = %q, want 0 and nothing on stderr", code, stderr)
+			}
+			for _, want := range tt.wants {
+				if !strings.Contains(stdout, want) {
+					t.Errorf("stdout does not contain %q:\n%s", want, stdout)
+				}
 			}
 		})
 	}

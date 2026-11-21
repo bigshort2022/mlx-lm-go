@@ -10,6 +10,7 @@ import (
 	"github.com/bigshort2022/mlx-lm-go/internal/engine"
 	"github.com/bigshort2022/mlx-lm-go/internal/generate"
 	"github.com/bigshort2022/mlx-lm-go/internal/hub"
+	"github.com/bigshort2022/mlx-lm-go/internal/tokenizer"
 )
 
 // referenceModel is the model the recordings in testdata/server were made
@@ -22,6 +23,21 @@ func needModel(t *testing.T) {
 	if _, err := hub.Resolve(referenceModel); err != nil {
 		t.Skip(err)
 	}
+}
+
+// referenceTokenizer loads the tokenizer of the reference model.
+func referenceTokenizer(t *testing.T) *tokenizer.Tokenizer {
+	t.Helper()
+	needModel(t)
+	dir, err := hub.Resolve(referenceModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := tokenizer.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tok
 }
 
 // sharedModel is the one engine of the test binary together with a record of

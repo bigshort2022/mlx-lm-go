@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -15,16 +17,26 @@ import (
 )
 
 // runServer serves a model over HTTP until ctx ends.
-func runServer(ctx context.Context, args []string, stderr io.Writer) int {
+func runServer(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	cfg, err := server.ParseFlags(args)
+	if errors.Is(err, flag.ErrHelp) {
+		fmt.Fprint(stdout, "usage: mlx-lm-go server --model <dir or repo id> [flags]\n\n")
+		server.Usage(stdout)
+		return exitOK
+	}
 	if err != nil {
 		return usageError(stderr, "server: "+err.Error())
 	}
-	if err := serve(ctx, cfg, stderr); err != nil {
+	if err := serve(ctx, cfg, stderr, readHeaderTimeout); err != nil {
 		return failure(stderr, err)
 	}
 	return exitOK
 }
+
+// readHeaderTimeout is how long a client may take to send the header of a
+// request. Without a limit, a client that stalls there holds its connection
+// for ever.
+const readHeaderTimeout = 10 * time.Second
 
 // shutdownGrace is how long the server waits for its handlers to finish
 // after it was told to stop.
@@ -32,8 +44,9 @@ const shutdownGrace = 3 * time.Second
 
 // serve loads the model, answers requests until ctx ends, then stops
 // accepting connections, cancels the generations in flight and closes the
-// engine.
-func serve(ctx context.Context, cfg server.Config, stderr io.Writer) error {
+// engine. A connection that takes longer than headerTimeout to send the
+// header of a request is closed.
+func serve(ctx context.Context, cfg server.Config, stderr io.Writer, headerTimeout time.Duration) error {
 	m, err := openModel(cfg.Model, cfg.ChatTemplate)
 	if err != nil {
 		return err
@@ -67,8 +80,9 @@ func serve(ctx context.Context, cfg server.Config, stderr io.Writer) error {
 	srv := &http.Server{
 		Handler: logRequests(newLogger(stderr, cfg.LogLevel), handler),
 		// Every request ends with ctx, and with the request its generation.
-		BaseContext: func(net.Listener) context.Context { return ctx },
-		ConnState:   unused.track,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
+		ConnState:         unused.track,
+		ReadHeaderTimeout: headerTimeout,
 	}
 	srv.RegisterOnShutdown(unused.close)
 	served := make(chan error, 1)

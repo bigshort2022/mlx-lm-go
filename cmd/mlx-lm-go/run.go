@@ -13,7 +13,19 @@ const (
 	exitUsage   = 2 // the command line is wrong
 )
 
-const usageHint = "usage: mlx-lm-go server|generate|version [flags]"
+// usage is what --help prints.
+const usage = `usage: mlx-lm-go <command> [flags]
+
+Commands:
+  server    serve a model over an OpenAI-compatible HTTP API, like mlx_lm.server
+  generate  answer one prompt on standard output
+  version   print the versions of the binary, of MLX and of the web UI
+
+Run "mlx-lm-go server --help" or "mlx-lm-go generate --help" for the flags.
+`
+
+// usageHint ends the report of a wrong command line.
+const usageHint = `usage: mlx-lm-go server|generate|version [flags]; "mlx-lm-go --help" says more`
 
 // run executes one command line and returns the process exit code.
 // ctx cancellation shuts a running server down.
@@ -23,11 +35,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	switch command, args := args[0], args[1:]; command {
 	case "server":
-		return runServer(ctx, args, stderr)
+		return runServer(ctx, args, stdout, stderr)
 	case "generate":
 		return runGenerate(ctx, args, stdout, stderr)
 	case "version":
 		return runVersion(stdout, stderr)
+	case "-h", "-help", "--help":
+		fmt.Fprint(stdout, usage)
+		return exitOK
 	default:
 		return usageError(stderr, fmt.Sprintf("unknown command %q", command))
 	}
