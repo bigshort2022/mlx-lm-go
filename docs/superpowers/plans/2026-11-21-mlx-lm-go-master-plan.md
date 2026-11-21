@@ -314,6 +314,21 @@ Exit gate: a new user on a clean Apple silicon Mac follows the README from insta
 
 Adapters (LoRA), speculative decoding, batching, distributed inference (`mlx.launch`, `--pipeline`), KV-cache quantisation, vision input, embeddings, a model downloader, Linux and CUDA, API keys, conversation persistence in the UI.
 
-## 10. Next step
+## 10. Status on 2026-11-21
 
-Approve this plan or edit section 1. Then the bite-sized plans for M0 and M5 are written first, because M0 unblocks everything and M5 has no dependency on the engine.
+| Milestone | State |
+|---|---|
+| M0 toolchain | done |
+| M1 `mlx` bindings and inference thread | done, reviewed, review fixes in |
+| M2 tokenizer and chat template | done, reviewed, review fixes in. The template engine is an in-package interpreter; gonja was dropped because it rendered wrong prompts where Jinja2 raises. |
+| M3 `qwen2` generation | done, reviewed, review fixes in. Output equals mlx-lm 0.32.2 on MLX 0.32.4 token for token. |
+| M4 HTTP server and the binary | done, reviewed. Not yet attached to mlx-fleet as a slot. |
+| M5 front end | page and standalone build done in the unite4ai repository, on a local branch that is not pushed or deployed. The UI is embedded in the binary. Browser checks so far: headless Chromium only, against loopback pages. |
+| M6 `qwen3_5`, prompt cache, tools, logprobs | not started |
+| M7 launch | not started, except a README |
+
+Changes to this plan made during implementation:
+
+- The reference is mlx-lm 0.32.2 running MLX 0.32.4, not 0.31.3. Numeric goldens must come from the MLX version the binary links.
+- A 403 for a disallowed origin carries no CORS headers, so a page cannot identify the server; the page's "unreachable" guidance names the flag instead.
+- One engine may be open per process. Closing it frees the model.
