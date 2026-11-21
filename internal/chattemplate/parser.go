@@ -11,6 +11,14 @@ import (
 type parser struct {
 	segments []segment
 	pos      int
+	// forDepth counts the for bodies around the statement being parsed, and
+	// macro is the macro whose body it belongs to, if any.
+	forDepth int
+	macro    *macroStmt
+}
+
+func (p *parser) newTag(seg segment) *tagReader {
+	return &tagReader{tokens: seg.tokens, line: seg.line, macro: p.macro}
 }
 
 // parse turns template source into the statements of its body.
@@ -37,7 +45,7 @@ func (p *parser) parseBody(terminators ...string) ([]statement, *tagReader, erro
 		case segText:
 			body = append(body, textStmt(seg.text))
 		case segOutput:
-			tag := newTagReader(seg)
+			tag := p.newTag(seg)
 			value, err := tag.parseExpression()
 			if err != nil {
 				return nil, nil, err
@@ -47,7 +55,7 @@ func (p *parser) parseBody(terminators ...string) ([]statement, *tagReader, erro
 			}
 			body = append(body, &outputStmt{value: value})
 		case segBlock:
-			tag := newTagReader(seg)
+			tag := p.newTag(seg)
 			keyword := tag.next()
 			if keyword.kind != tokName {
 				return nil, nil, tag.errorf("expected a statement name")
@@ -86,10 +94,12 @@ func (p *parser) parseStatement(keyword string, tag *tagReader) (statement, erro
 }
 
 // parseIf parses {% if %} with its {% elif %} and {% else %} branches.
+// As in Jinja, a condition is not a full expression: "a if b else c" needs
+// parentheses there.
 func (p *parser) parseIf(tag *tagReader) (statement, error) {
 	stmt := &ifStmt{}
 	for {
-		condition, err := tag.parseExpression()
+		condition, err := tag.parseOr()
 		if err != nil {
 			return nil, err
 		}
@@ -160,7 +170,9 @@ func (p *parser) parseFor(tag *tagReader) (statement, error) {
 		return nil, err
 	}
 
+	p.forDepth++
 	body, end, err := p.parseBody("else", "endfor")
+	p.forDepth--
 	if err != nil {
 		return nil, err
 	}
@@ -200,6 +212,15 @@ func parseSet(tag *tagReader) (statement, error) {
 
 // parseMacro parses {% macro name(a, b=default) %} ... {% endmacro %}.
 func (p *parser) parseMacro(tag *tagReader) (statement, error) {
+	// A macro body here sees the template's top-level variables. In Jinja it
+	// also sees the variables around its definition, so one defined inside a
+	// for body or another macro would behave differently.
+	switch {
+	case p.macro != nil:
+		return nil, tag.errorf("macro inside a macro is not supported")
+	case p.forDepth > 0:
+		return nil, tag.errorf("macro inside a for loop is not supported")
+	}
 	stmt := &macroStmt{}
 	var err error
 	if stmt.name, err = tag.expectTarget(); err != nil {
@@ -215,6 +236,9 @@ func (p *parser) parseMacro(tag *tagReader) (statement, error) {
 			}
 		}
 		param := macroParam{}
+		if tag.isName("caller") {
+			return nil, tag.errorf("macro parameter %q is not supported", "caller")
+		}
 		if param.name, err = tag.expectTarget(); err != nil {
 			return nil, err
 		}
@@ -235,7 +259,9 @@ func (p *parser) parseMacro(tag *tagReader) (statement, error) {
 		return nil, err
 	}
 
+	p.macro = stmt
 	body, end, err := p.parseBody("endmacro")
+	p.macro = nil
 	if err != nil {
 		return nil, err
 	}

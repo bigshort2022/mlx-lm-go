@@ -1,6 +1,7 @@
 package chattemplate
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -78,8 +79,8 @@ func filterSafe(value any, _ []namedValue) (any, error) {
 }
 
 // generator is what the items filter returns: something a for loop can walk
-// once and nothing else can use. Like Python's generator, it reports a wrong
-// input only when it is iterated.
+// once, after which it is empty, and nothing else can use. Like Python's
+// generator, it reports a wrong input only when it is iterated.
 type generator struct {
 	items []any
 	err   error
@@ -100,6 +101,11 @@ func filterItems(value any, _ []namedValue) (any, error) {
 	return &generator{err: pyError("TypeError", "Can only get item pairs from a mapping.")}, nil
 }
 
+// maxJSONIndent bounds tojson's indent. Python has no bound; without one, a
+// template that takes the indent from the request would let a request ask
+// for gigabytes of spaces.
+const maxJSONIndent = 100
+
 // filterToJSON is json.dumps(value, ensure_ascii=False) with the optional
 // indent and ensure_ascii arguments.
 func filterToJSON(value any, options []namedValue) (any, error) {
@@ -109,14 +115,18 @@ func filterToJSON(value any, options []namedValue) (any, error) {
 		case "ensure_ascii":
 			encoder.ensureASCII = truthy(option.value)
 		case "indent":
-			switch indent := option.value.(type) {
-			case nil:
-			case int:
-				encoder.multiline = true
-				encoder.indent = indent
-			default:
-				return nil, pyError("TypeError", "tojson: indent must be an integer or none, not %s", typeName(indent))
+			if option.value == nil {
+				continue
 			}
+			indent, ok := asIndex(option.value)
+			switch {
+			case !ok:
+				return nil, pyError("TypeError", "tojson: indent must be an integer or none, not %s", typeName(option.value))
+			case indent > maxJSONIndent:
+				return nil, fmt.Errorf("tojson: indent %d is above the limit of %d", indent, maxJSONIndent)
+			}
+			encoder.multiline = true
+			encoder.indent = indent
 		}
 	}
 	if err := encoder.encode(value, 0); err != nil {

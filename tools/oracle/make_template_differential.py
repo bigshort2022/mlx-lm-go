@@ -8,21 +8,27 @@ Run from the repository root with a Python environment that has mlx-lm 0.31.3
 The models must already be in the Hugging Face cache. Output goes to
 internal/chattemplate/testdata/:
 
+    <family>/                    the model's chat template and special tokens,
+                                 copied so the Go tests need no model download
     differential_<family>.jsonl  requests beyond testdata/<family>/template.jsonl,
                                  hand-written and seeded random ones, rendered
                                  with tokenizer.apply_chat_template
     semantics.jsonl              small templates, one Jinja rule each, rendered
                                  with the environment Hugging Face compiles
                                  chat templates in
+    README.md                    where the copies came from
 
 Every row records the prompt Python produced or the error it raised. The Go
 tests treat these files as the definition of correct behaviour.
 """
 
 import json
+import platform
 import random
 from pathlib import Path
 
+import jinja2
+import transformers
 from huggingface_hub import snapshot_download
 from transformers import AutoTokenizer
 from transformers.utils.chat_template_utils import _compile_jinja_template
@@ -310,6 +316,59 @@ def differential_cases():
             ],
         },
         {"name": "blank_user_content", "messages": [{"role": "user", "content": " \n\t "}]},
+        # Parameters of apply_chat_template itself, arriving as template variables.
+        {"name": "kwarg_messages", "messages": [USER], "kwargs": {"messages": []}},
+        {"name": "kwarg_tools", "messages": [USER], "kwargs": {"tools": []}},
+        {"name": "kwarg_add_generation_prompt", "messages": [USER], "kwargs": {"add_generation_prompt": False}},
+        {"name": "kwarg_tokenize", "messages": [USER], "kwargs": {"tokenize": False}},
+        {"name": "kwarg_conversation", "messages": [USER], "kwargs": {"conversation": []}},
+        {"name": "kwarg_self", "messages": [USER], "kwargs": {"self": 1}},
+        {
+            "name": "kwarg_return_assistant_tokens_mask",
+            "messages": [USER],
+            "kwargs": {"return_assistant_tokens_mask": True},
+        },
+        {
+            "name": "kwarg_continue_final_message_with_generation_prompt",
+            "messages": [USER, {"role": "assistant", "content": "Sure, the answer is"}],
+            "kwargs": {"continue_final_message": True},
+        },
+        {"name": "documents_of_strings", "messages": [USER], "kwargs": {"documents": ["a"]}},
+        {"name": "documents_is_a_string", "messages": [USER], "kwargs": {"documents": "abc"}},
+        {"name": "documents_is_a_number", "messages": [USER], "kwargs": {"documents": 5}},
+        {"name": "documents_is_an_object", "messages": [USER], "kwargs": {"documents": {"a": 1}}},
+        {"name": "documents_with_one_string", "messages": [USER], "kwargs": {"documents": [{"title": "t"}, "a"]}},
+        {"name": "documents_valid", "messages": [USER], "kwargs": {"documents": [{"title": "t", "text": "x"}]}},
+        {"name": "documents_empty", "messages": [USER], "kwargs": {"documents": []}},
+        {"name": "documents_null", "messages": [USER], "kwargs": {"documents": None}},
+        # Integers beyond 64 bits.
+        {
+            "name": "tool_schema_with_integers_beyond_int64",
+            "messages": [USER],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "f",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "n": {
+                                    "type": "integer",
+                                    "maximum": 18446744073709551615,
+                                    "minimum": -99999999999999999999,
+                                }
+                            },
+                        },
+                    },
+                }
+            ],
+        },
+        {
+            "name": "tool_call_arguments_beyond_int64",
+            "messages": [USER, call({"n": 18446744073709551615, "l": [10**30, -(10**30)]}), result()],
+            "tools": [TOOL],
+        },
     ]
 
 
@@ -507,12 +566,43 @@ VARIABLES = {
 }
 
 
+# Integers Python holds exactly and a 64-bit integer cannot.
+BIG = {
+    "huge": 18446744073709551615,
+    "huge2": 18446744073709551616,
+    "hf": 1.8446744073709552e19,
+    "neg": -99999999999999999999,
+    "hl": [18446744073709551615, -99999999999999999999],
+}
+
+# Values at the edges where a comparison through float64, or a slice walked
+# with a 64-bit index, goes wrong.
+EXACT = {
+    "big": 9007199254740993,
+    "bigf": 9007199254740992.0,
+    "fs": [9007199254740992.0],
+    "half": 1.5,
+    "nhalf": -1.5,
+    "three": 3.0,
+    "top": 9223372036854775807,
+    "bottom": -9223372036854775808,
+    "far": 9223372036854775808.0,
+    "nfar": -9223372036854775809.0,
+    "step": 9223372036854775807,
+    "nstep": -9223372036854775808,
+}
+
+
 def falsy(expression):
     return "{% if " + expression + " %}T{% else %}F{% endif %}"
 
 
 def semantics_cases():
-    """(group, template source[, extra variables]) rows, one Jinja rule each."""
+    """(group, template source[, variables]) rows, one Jinja rule each.
+
+    The variables are a dict added to VARIABLES or, to control the exact JSON
+    text the Go renderer receives, a string holding all of them.
+    """
     rows = [
         # Template text outside tags.
         ("text", "hello"),
@@ -714,6 +804,10 @@ def semantics_cases():
         ("if", "{% if q.x.y %}a{% endif %}"),
         ("if", "{% if fl %}{{ q.x.y }}{% endif %}ok"),
         ("if", "{% if not(s.startswith('x') and s.endswith('b')) %}a{% endif %}"),
+        ("if", "{% if t if t else t %}a{% endif %}"),
+        ("if", "{% if n %}{% elif t if t else t %}a{% endif %}"),
+        ("if", "{% if (t if fl else n) %}a{% else %}b{% endif %}|{% if n %}{% elif (t if t else n) %}c{% endif %}"),
+        ("if", "{% if t or fl if t %}a{% endif %}"),
         # for loops.
         ("for", "{% for x in l %}{{ x }};{% endfor %}|{% for x in el %}{{ x }};{% endfor %}|{% for x in q %}{{ x }};{% endfor %}|{% for x in s %}{{ x }};{% endfor %}"),
         ("for", "{% for x in d %}{{ x }};{% endfor %}|{% for x in 'é天' %}{{ x }};{% endfor %}|{% for x in six[::-2] %}{{ x }};{% endfor %}"),
@@ -750,6 +844,10 @@ def semantics_cases():
         ("for", "{% for a, b in d|items %}{{ loop.previtem }}{{ loop.nextitem }};{% endfor %}"),
         ("for", "{% for a, b, c in triples %}{{ a }}{{ b }}{{ c }};{% endfor %}", {"triples": [[1, 2, 3], "xyz"]}),
         ("for", "{% for x in l %}{% for y in l %}{% if y > x %}{{ x }}<{{ y }} {% endif %}{% endfor %}{% endfor %}"),
+        ("for", "{% for x in l %}{{ loop.depth }}{{ loop.depth0 }}{% for y in one %}{{ loop.depth }}{{ loop.depth0 }}{% endfor %};{% endfor %}"),
+        ("for", "{% set it = d|items %}{% for k, v in it %}{{ k }}{% endfor %}|{% for k, v in it %}{{ k }}{% endfor %}|{% if it %}T{% endif %}"),
+        ("for", "{% set it = n|items %}{% if it %}T{% endif %}{% for k, v in it %}x{% endfor %}"),
+        ("for", "{% set ns = namespace(it=d|items) %}{% for x in l %}[{% for k, v in ns.it %}{{ k }}{% endfor %}]{% endfor %}"),
         # set and namespace.
         ("set", "{% set a = 1 %}{% set b = a + 1 %}{{ a }}{{ b }}"),
         ("set", "{% set a = 1 %}{% if t %}{% set a = 2 %}{% set c = 3 %}{% endif %}{{ a }}{{ c }}"),
@@ -786,6 +884,14 @@ def semantics_cases():
         ("macro", "{% macro down(n) %}{{ n }}{% if n > 0 %}{{ down(n - 1) }}{% endif %}{% endmacro %}{{ down(3) }}"),
         ("macro", "{% macro forever(n) %}{{ forever(n) }}{% endmacro %}{{ forever(1) }}"),
         ("macro", "{% macro mm(a) %}{{ a }}{% endmacro %}{% set mm2 = mm %}{{ mm2('via alias') }}|{{ mm == mm2 }}|{{ mm == s }}"),
+        ("macro", "{% macro a(n) %}{% if n > 0 %}{{ b(n - 1) }}{% endif %}{% endmacro %}{% macro b(n) %}{% if n > 0 %}{{ a(n - 1) }}{% endif %}{% endmacro %}{{ a(240) }}ok"),
+        ("macro", "{% macro a(n) %}{% if n > 0 %}{{ b(n - 1) }}{% endif %}{% endmacro %}{% macro b(n) %}{% if n > 0 %}{{ a(n - 1) }}{% endif %}{% endmacro %}{{ a(100) }}ok"),
+        ("macro", "{% macro mm(kwargs, varargs) %}{{ kwargs }}{{ varargs }}{% endmacro %}{{ mm(1, 2) }}"),
+        ("macro", "{% macro mm(a) %}{% endmacro %}{{ mm(a=1, a=2) }}"),
+        ("macro", "{{ namespace(a=1, a=2).a }}"),
+        ("macro", "{{ l | tojson(indent=2, indent=3) }}"),
+        ("macro", "{% if t %}{% macro mm() %}in if{% endmacro %}{% endif %}{{ mm() }}"),
+        ("macro", "{{ varargs is defined }}|{{ kwargs is defined }}|{{ caller is defined }}"),
         # String methods.
         ("methods", "{{ s.startswith('a') }}|{{ s.startswith('b') }}|{{ s.startswith('') }}|{{ s.endswith('b') }}|{{ s.endswith(',b') }}|{{ s.endswith('a') }}|{{ es.startswith('a') }}"),
         ("methods", "{{ s.split(',') }}|{{ s.split(';') }}|{{ s.split(',')[-1] }}|{{ s.split(';')[-1] }}|{{ s.split(',')[0] }}|{{ es.split(',') }}|{{ 'a,,b,'.split(',') }}|{{ 'abab'.split('ab') }}"),
@@ -828,6 +934,21 @@ def semantics_cases():
         ("calls", "{{ namespace(a=1)['a'] }}|{{ namespace(a=1)['b'] is defined }}|{{ namespace(a=1)[0] is defined }}"),
         ("calls", "{{ nope('x') }}"),
         ("calls", "{{ strftime_now is defined }}|{{ raise_exception is defined }}|{{ namespace is defined }}"),
+        # Integers beyond 64 bits and floats beyond the double range.
+        ("numbers", "{{ huge }}|{{ huge|tojson }}|{{ huge|string }}|{{ hl }}|{{ hl|tojson }}|{{ neg }}|{{ huge is defined }}", BIG),
+        ("numbers", "{{ huge == huge }}|{{ huge == 1 }}|{{ huge == hf }}|{{ huge != huge2 }}|{{ huge == huge2 }}|{{ hf == huge2 }}|{{ huge2 == hf }}|{{ huge in hl }}|{{ 1 in hl }}|{{ neg == neg }}", BIG),
+        ("numbers", "{{ l[huge] is defined }}|{{ l[:huge] }}|{{ l[neg:] }}|{{ l[::huge] }}|{{ l[::neg] }}|{{ s[neg:huge:huge] }}|{{ six[huge:] }}|{{ six[:neg] }}|{{ six[huge::neg] }}", BIG),
+        ("numbers", "{% if huge %}T{% endif %}|{{ huge|trim }}|{{ huge ~ 'x' }}|{{ huge|safe }}|{{ not huge }}|{{ huge and 1 }}|{{ neg or 1 }}", BIG),
+        ("numbers", "{{ huge is string }}|{{ huge is mapping }}|{{ huge is iterable }}|{{ huge is sequence }}|{{ huge is none }}|{{ huge is true }}", BIG),
+        ("numbers", "{{ huge|length }}", BIG),
+        ("numbers", "{% for x in huge %}{% endfor %}", BIG),
+        ("numbers", "{{ huge.x is defined }}|{{ huge[0] is defined }}|{{ d[huge] is defined }}", BIG),
+        ("numbers", "{{ x }}|{{ x|tojson }}|{{ y }}|{{ y|tojson }}|{{ z }}|{{ xs|tojson }}|{{ xs }}|{{ x|string }}", '{"x": 1e309, "y": -1e400, "z": 1e-400, "xs": [1e309, -1E+999, 1.7976931348623157e308]}'),
+        ("numbers", "{{ x == x }}|{{ x > 1 }}|{{ 1 < x }}|{{ x + 1 }}|{{ (x - x)|tojson }}|{{ x - x }}|{{ (x - x) == (x - x) }}|{{ 1 == (x - x) }}|{{ 1 < (x - x) }}|{{ -x }}", '{"x": 1e309}'),
+        ("numbers", "{{ big == bigf }}|{{ big != bigf }}|{{ big < bigf }}|{{ big > bigf }}|{{ big <= bigf }}|{{ big >= bigf }}|{{ bigf == big }}|{{ bigf < big }}|{{ 9007199254740992 == bigf }}|{{ big in fs }}", EXACT),
+        ("numbers", "{{ 1 < half }}|{{ 2 > half }}|{{ 2 < half }}|{{ -2 < nhalf }}|{{ -1 > nhalf }}|{{ -1 < nhalf }}|{{ 3 == three }}|{{ 3 <= three }}|{{ 3 < three }}|{{ top < far }}|{{ top == far }}|{{ bottom > nfar }}|{{ three == 3 }}", EXACT),
+        ("numbers", "{{ l[1::step] }}|{{ s[1::step] }}|{{ l[::nstep] }}|{{ s[::nstep] }}|{{ six[::step] }}|{{ six[4::nstep] }}|{{ six[step:] }}|{{ six[:nstep] }}|{{ six[nstep:step] }}|{{ six[step::nstep] }}", EXACT),
+        ("numbers", "{{ l | tojson(indent=t) }}|{{ l | tojson(indent=-2) }}|{{ l | tojson(indent=fl) }}|{{ l | tojson(indent=z) }}"),
     ]
     return rows
 
@@ -855,11 +976,65 @@ def write_jsonl(path, rows):
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+SPECIAL_TOKENS = ("bos_token", "eos_token", "pad_token", "unk_token")
+
+
+def vendor_model(family, snapshot):
+    """Copy what the Go package reads from a model directory next to the fixtures.
+
+    The Go tests render with these copies, so they run without the models.
+    """
+    out = OUT / family
+    out.mkdir(exist_ok=True)
+    config = json.loads((snapshot / "tokenizer_config.json").read_text(encoding="utf-8"))
+    template_file = snapshot / "chat_template.jinja"
+    if template_file.exists():
+        template = template_file.read_bytes()
+    else:
+        template = config["chat_template"].encode("utf-8")
+    (out / "chat_template.jinja").write_bytes(template)
+    tokens = {name: config.get(name) for name in SPECIAL_TOKENS}
+    (out / "tokenizer_config.json").write_text(json.dumps(tokens, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+README = """\
+# chattemplate test data
+
+Everything here is written by `tools/oracle/make_template_differential.py`
+from the Python reference. Do not edit it by hand; change the script and run
+it again.
+
+## Vendored chat templates
+
+`<family>/chat_template.jinja` is the model's chat template, byte for byte,
+and `<family>/tokenizer_config.json` holds the special tokens a template can
+read. The tests render with these copies, so they need no model download.
+
+| Directory | Repository | Snapshot |
+|---|---|---|
+{models}
+
+## Fixtures
+
+- `differential_<family>.jsonl`: requests beyond the golden rows in
+  `testdata/<family>/template.jsonl` at the repository root, with what
+  `tokenizer.apply_chat_template` returned or raised.
+- `semantics.jsonl`: small templates, one Jinja rule each, with what the
+  environment Hugging Face compiles chat templates in rendered or raised.
+
+Reference versions: Python {python}, transformers {transformers}, jinja2 {jinja2}.
+"""
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
 
+    models = []
     for family, repo in FAMILIES.items():
-        tok = AutoTokenizer.from_pretrained(snapshot_download(repo, local_files_only=True))
+        snapshot = Path(snapshot_download(repo, local_files_only=True))
+        vendor_model(family, snapshot)
+        models.append(f"| `{family}/` | `{repo}` | `{snapshot.name}` |")
+        tok = AutoTokenizer.from_pretrained(snapshot)
         rows = []
         for case in differential_cases() + random_cases():
             row = {
@@ -878,8 +1053,14 @@ def main():
     counts = {}
     for group, source, *extra in semantics_cases():
         counts[group] = counts.get(group, 0) + 1
-        kwargs = {**VARIABLES, **(extra[0] if extra else {})}
-        row = {"name": f"{group}/{counts[group]:02d}", "source": source, "kwargs": kwargs}
+        row = {"name": f"{group}/{counts[group]:02d}", "source": source}
+        if extra and isinstance(extra[0], str):
+            # The variables as exact JSON text, for values json.dumps would
+            # not write back the way they were given.
+            row["kwargs_json"] = extra[0]
+            kwargs = json.loads(extra[0])
+        else:
+            kwargs = row["kwargs"] = {**VARIABLES, **(extra[0] if extra else {})}
         row.update(
             outcome(
                 lambda: _compile_jinja_template(source).render(
@@ -890,6 +1071,14 @@ def main():
         rows.append(row)
     write_jsonl(OUT / "semantics.jsonl", rows)
     print(f"semantics: {len(rows)} rows, {sum('error' in r for r in rows)} errors")
+
+    readme = README.format(
+        models="\n".join(models),
+        python=platform.python_version(),
+        transformers=transformers.__version__,
+        jinja2=jinja2.__version__,
+    )
+    (OUT / "README.md").write_text(readme, encoding="utf-8")
 
 
 if __name__ == "__main__":

@@ -62,6 +62,18 @@ func TestParseNamesTheUnsupportedConstruct(t *testing.T) {
 		{"{{ joiner(', ') }}", `function "joiner" is not supported`},
 		{"{{ cycler('a', 'b') }}", `function "cycler" is not supported`},
 		{"{{ lipsum(1) }}", `function "lipsum" is not supported`},
+		{"{% for x in l %}{{ loop.cycle('a', 'b') }}{% endfor %}", "loop.cycle is not supported"},
+		{"{% for x in l %}{{ loop.changed(x) }}{% endfor %}", "loop.changed is not supported"},
+		// Macros.
+		{"{% macro m() %}{{ varargs }}{% endmacro %}", `"varargs" in a macro is not supported`},
+		{"{% macro m() %}{{ kwargs | tojson }}{% endmacro %}", `"kwargs" in a macro is not supported`},
+		{"{% macro m() %}{% if x %}{{ caller() }}{% endif %}{% endmacro %}", `"caller" in a macro is not supported`},
+		{"{% macro m(a, caller=none) %}{% endmacro %}", `macro parameter "caller" is not supported`},
+		{"{% for x in l %}{% macro m() %}{{ x }}{% endmacro %}{{ m() }}{% endfor %}", "macro inside a for loop is not supported"},
+		{"{% macro outer(a) %}{% macro inner() %}{{ a }}{% endmacro %}{% endmacro %}", "macro inside a macro is not supported"},
+		// Python accepts these; see the package comment.
+		{"{{ 99999999999999999999 }}", "integer literal 99999999999999999999 is out of range"},
+		{"text {# never closed", "missing end of comment tag"},
 	}
 	for _, c := range cases {
 		_, err := Parse(c.source, nil)
@@ -100,9 +112,7 @@ func TestParseRejectsMalformedTemplates(t *testing.T) {
 		"{{ l[0) }}",
 		"{{ 'unterminated }}",
 		"{{ never closed",
-		"{# never closed",
 		"{{ a ? b }}",
-		"{{ 99999999999999999999 }}",
 	} {
 		if _, err := Parse(source, nil); err == nil {
 			t.Errorf("Parse(%q) succeeded, want an error", source)
@@ -128,7 +138,7 @@ func TestRenderNamesTheUnsupportedOperation(t *testing.T) {
 		{"{{ d.items }}", "dict.items is a method in Python"},
 		{"{{ d.get('k') }}", "dict.get is a method in Python"},
 		{"{{ d['keys'] }}", "dict.keys is a method in Python"},
-		{"{{ s.upper() }}", "'str object' has no attribute 'upper'"},
+		{"{{ s.upper() }}", "str.upper is not supported"},
 		{"{{ s.split() }}", "str.split() takes exactly one argument"},
 		{"{{ namespace(d) }}", "namespace() with positional arguments is not supported"},
 		{"{{ (s|safe).strip() }}", "attribute access on a safe string is not supported"},
@@ -144,9 +154,33 @@ func TestRenderNamesTheUnsupportedOperation(t *testing.T) {
 		// Reached through another name, the call is only seen while rendering.
 		{"{% set r = range %}{{ r(3) }}", "range() is not supported"},
 		{"{% set now = strftime_now %}{{ now('%Y') }}", "strftime_now() is not supported"},
+		// Python has these attributes; nothing a chat template needs.
+		{"{{ s.upper }}", "str.upper is not supported"},
+		{"{{ s['upper'] }}", "str.upper is not supported"},
+		{"{{ i.real }}", "int.real is not supported"},
+		{"{{ t.real }}", "bool.real is not supported"},
+		{"{{ f.is_integer() }}", "float.is_integer is not supported"},
+		{"{{ l.index(1) }}", "list.index is not supported"},
+		{"{{ l['count'] }}", "list.count is not supported"},
+		{"{% for pair in d|items %}{{ pair.count }}{% endfor %}", "tuple.count is not supported"},
+		{"{% macro m(a) %}{% endmacro %}{{ m.name }}", "attribute access on a macro is not supported"},
+		{"{% macro m(a) %}{% endmacro %}{{ m['arguments'] }}", "attribute access on a macro is not supported"},
+		// Python integers have no upper bound.
+		{"{{ big + 1 }}", "integer result is out of range"},
+		{"{{ 0 - big - 2 }}", "integer result is out of range"},
+		{"{{ -small }}", "integer result is out of range"},
+		{"{{ huge + 1 }}", "arithmetic on an integer beyond 64 bits is not supported"},
+		{"{{ 1 - huge }}", "arithmetic on an integer beyond 64 bits is not supported"},
+		{"{{ -huge }}", "arithmetic on an integer beyond 64 bits is not supported"},
+		{"{{ huge > 1 }}", "ordering an integer beyond 64 bits is not supported"},
+		// Python would write the megabytes of spaces asked for.
+		{"{{ l | tojson(indent=101) }}", "tojson: indent 101 is above the limit of 100"},
+		{"{{ l | tojson(indent=big) }}", "is above the limit of 100"},
+		{"{{ l | tojson(indent=huge) }}", "tojson: indent must be an integer or none"},
 	}
 	for _, c := range cases {
-		got, err := renderSource(t, c.source, `{"d": {"k": 1}, "s": "text", "l": [1]}`)
+		got, err := renderSource(t, c.source, `{"d": {"k": 1}, "s": "text", "l": [1], "i": 3, "f": 1.5, "t": true,
+			"big": 9223372036854775807, "small": -9223372036854775808, "huge": 18446744073709551615}`)
 		switch {
 		case err == nil:
 			t.Errorf("%s rendered %q, want an error with %q", c.source, got, c.want)

@@ -7,6 +7,8 @@ type scope struct {
 	vars   map[string]any
 	parent *scope
 	root   *scope
+	// macroDepth, on the root scope, counts the macro calls in progress.
+	macroDepth int
 }
 
 func newRootScope(vars map[string]any) *scope {

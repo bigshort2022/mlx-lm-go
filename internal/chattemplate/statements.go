@@ -131,6 +131,10 @@ func (l *loopState) attr(name string) (any, bool) {
 		return l.index0 == len(l.items)-1, true
 	case "length":
 		return len(l.items), true
+	case "depth":
+		return 1, true // deeper only in a recursive loop, which is not supported
+	case "depth0":
+		return 0, true
 	case "previtem":
 		if l.index0 == 0 {
 			return undefined{hint: "there is no previous item"}, true

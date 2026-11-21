@@ -11,8 +11,8 @@ func TestRenderIsSafeForConcurrentUse(t *testing.T) {
 	const goroutines = 16
 	for _, family := range goldenFamilies {
 		t.Run(family.name, func(t *testing.T) {
-			tmpl := loadModelTemplate(t, family.repo)
-			rows := readRows[requestRow](t, goldenPath(family.name))
+			tmpl := loadVendoredTemplate(t, family.name)
+			rows := readRows[requestRow](t, goldenPath(family.name), goldenRowCount)
 			var wg sync.WaitGroup
 			for range goroutines {
 				wg.Go(func() {

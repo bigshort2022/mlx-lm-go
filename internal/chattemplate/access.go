@@ -1,7 +1,11 @@
 package chattemplate
 
 import (
+	"errors"
 	"fmt"
+	"math"
+	"math/big"
+	"slices"
 	"strings"
 )
 
@@ -44,7 +48,12 @@ func getAttr(object any, name string) (any, error) {
 			}}, nil
 		}
 	case safeString:
-		return nil, fmt.Errorf("attribute access on a safe string is not supported")
+		return nil, errors.New("attribute access on a safe string is not supported")
+	case *macro:
+		return nil, errors.New("attribute access on a macro is not supported")
+	}
+	if kind := typeName(object); slices.Contains(pythonAttributes[kind], name) {
+		return nil, fmt.Errorf("%s.%s is not supported", kind, name)
 	}
 	return undefined{hint: fmt.Sprintf("'%s' has no attribute '%s'", objectDescription(object), name)}, nil
 }
@@ -175,7 +184,7 @@ func sliceIndices(length int, start, stop, step any) ([]int, error) {
 	stride := 1
 	if step != nil {
 		var ok bool
-		if stride, ok = asIndex(step); !ok {
+		if stride, ok = sliceInt(step); !ok {
 			return nil, errSliceIndex
 		}
 		if stride == 0 {
@@ -191,7 +200,7 @@ func sliceIndices(length int, start, stop, step any) ([]int, error) {
 		if value == nil {
 			return missing, nil
 		}
-		index, ok := asIndex(value)
+		index, ok := sliceInt(value)
 		if !ok {
 			return 0, errSliceIndex
 		}
@@ -213,11 +222,34 @@ func sliceIndices(length int, start, stop, step any) ([]int, error) {
 		return nil, err
 	}
 
-	var indices []int
-	for index := from; stride > 0 && index < to || stride < 0 && index > to; index += stride {
-		indices = append(indices, index)
+	// The positions are counted rather than walked: stepping an index by a
+	// stride near the limits of int would wrap around.
+	count := 0
+	switch {
+	case stride > 0 && from < to:
+		count = (to-from-1)/stride + 1
+	case stride < 0 && from > to:
+		magnitude := uint(-(stride + 1)) + 1 // -stride, which the smallest int does not have
+		count = int(uint(from-to-1)/magnitude) + 1
+	}
+	indices := make([]int, count)
+	for i := range indices {
+		indices[i] = from + i*stride
 	}
 	return indices, nil
+}
+
+// sliceInt returns a slice start, stop or step as an int. An integer beyond
+// 64 bits counts as the largest or smallest int: either lies outside every
+// sequence, which is all a slice asks of it.
+func sliceInt(value any) (int, bool) {
+	if integer, ok := value.(*big.Int); ok {
+		if integer.Sign() < 0 {
+			return math.MinInt, true
+		}
+		return math.MaxInt, true
+	}
+	return asIndex(value)
 }
 
 var errSliceIndex = pyError("TypeError", "slice indices must be integers or None or have an __index__ method")

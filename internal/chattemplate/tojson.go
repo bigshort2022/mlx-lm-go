@@ -3,6 +3,7 @@ package chattemplate
 import (
 	"fmt"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 	"unicode/utf16"
@@ -26,6 +27,8 @@ func (e *jsonEncoder) encode(value any, depth int) error {
 		e.out.WriteString(strconv.FormatBool(value))
 	case int:
 		e.out.WriteString(strconv.Itoa(value))
+	case *big.Int:
+		e.out.WriteString(value.String())
 	case float64:
 		e.out.WriteString(jsonFloat(value))
 	case string:

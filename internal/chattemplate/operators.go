@@ -1,7 +1,10 @@
 package chattemplate
 
 import (
+	"cmp"
 	"errors"
+	"math"
+	"math/big"
 	"slices"
 	"strings"
 )
@@ -62,12 +65,40 @@ func firstUndefined(operands ...any) error {
 // Python integers grow without bound; ours fail instead of wrapping around.
 var errIntegerRange = errors.New("integer result is out of range")
 
+// An integer beyond 64 bits can be read from a request, compared for
+// equality and rendered, which is all a chat template does with such a
+// number; computing with one is not implemented.
+var errBigArithmetic = errors.New("arithmetic on an integer beyond 64 bits is not supported")
+
+func isBig(value any) bool {
+	_, ok := value.(*big.Int)
+	return ok
+}
+
+// equalsBig is integer == other, where integer does not fit an int.
+func equalsBig(integer *big.Int, other any) bool {
+	switch other := other.(type) {
+	case *big.Int:
+		return integer.Cmp(other) == 0
+	case float64:
+		if math.IsNaN(other) || math.IsInf(other, 0) {
+			return false
+		}
+		whole, accuracy := big.NewFloat(other).Int(nil)
+		return accuracy == big.Exact && integer.Cmp(whole) == 0
+	}
+	return false
+}
+
 // add is left + right. Python escapes the other operand when one is a safe
 // string; no chat template relies on that, so here it is a type error like
 // any other mix.
 func add(left, right any) (any, error) {
 	if err := firstUndefined(left, right); err != nil {
 		return nil, err
+	}
+	if isBig(left) || isBig(right) {
+		return nil, errBigArithmetic
 	}
 	if a, ok := asNumber(left); ok {
 		if b, ok := asNumber(right); ok {
@@ -101,6 +132,9 @@ func subtract(left, right any) (any, error) {
 	if err := firstUndefined(left, right); err != nil {
 		return nil, err
 	}
+	if isBig(left) || isBig(right) {
+		return nil, errBigArithmetic
+	}
 	a, aOK := asNumber(left)
 	b, bOK := asNumber(right)
 	if !aOK || !bOK {
@@ -121,6 +155,9 @@ func negate(operand any) (any, error) {
 	if err := firstUndefined(operand); err != nil {
 		return nil, err
 	}
+	if isBig(operand) {
+		return nil, errBigArithmetic
+	}
 	n, ok := asNumber(operand)
 	if !ok {
 		return nil, pyError("TypeError", "bad operand type for unary -: '%s'", typeName(operand))
@@ -133,15 +170,19 @@ func negate(operand any) (any, error) {
 
 // equal is left == right.
 func equal(left, right any) bool {
+	if integer, ok := left.(*big.Int); ok {
+		return equalsBig(integer, right)
+	}
+	if integer, ok := right.(*big.Int); ok {
+		return equalsBig(integer, left)
+	}
 	if a, ok := asNumber(left); ok {
 		b, ok := asNumber(right)
-		switch {
-		case !ok:
+		if !ok {
 			return false
-		case a.isFloat || b.isFloat:
-			return a.asFloat() == b.asFloat()
 		}
-		return a.integer == b.integer
+		comparison, ok := compareNumbers(a, b)
+		return ok && comparison == 0
 	}
 	if a, ok := asText(left); ok {
 		b, ok := asText(right)
@@ -182,19 +223,54 @@ func order(op string, left, right any) (bool, error) {
 	if err := firstUndefined(left, right); err != nil {
 		return false, err
 	}
+	if isBig(left) || isBig(right) {
+		return false, errors.New("ordering an integer beyond 64 bits is not supported")
+	}
 	a, aNumber := asNumber(left)
 	b, bNumber := asNumber(right)
 	aText, aIsText := asText(left)
 	bText, bIsText := asText(right)
 	switch {
-	case aNumber && bNumber && !a.isFloat && !b.isFloat:
-		return ordered(op, a.integer, b.integer), nil
 	case aNumber && bNumber:
-		return ordered(op, a.asFloat(), b.asFloat()), nil
+		comparison, ok := compareNumbers(a, b)
+		return ok && ordered(op, comparison, 0), nil
 	case aIsText && bIsText:
 		return ordered(op, aText, bText), nil
 	}
 	return false, pyError("TypeError", "'%s' not supported between instances of '%s' and '%s'", op, typeName(left), typeName(right))
+}
+
+// compareNumbers orders two numbers exactly, as Python does: an int is not
+// rounded to a float to meet one. ok is false when either is NaN, which is
+// neither equal to nor ordered against anything.
+func compareNumbers(a, b number) (comparison int, ok bool) {
+	switch {
+	case !a.isFloat && !b.isFloat:
+		return cmp.Compare(a.integer, b.integer), true
+	case a.isFloat && b.isFloat:
+		return cmp.Compare(a.float, b.float), !math.IsNaN(a.float) && !math.IsNaN(b.float)
+	case a.isFloat:
+		comparison, ok = compareIntFloat(b.integer, a.float)
+		return -comparison, ok
+	}
+	return compareIntFloat(a.integer, b.float)
+}
+
+func compareIntFloat(integer int, float float64) (comparison int, ok bool) {
+	switch {
+	case math.IsNaN(float):
+		return 0, false
+	case float >= 1<<63:
+		return -1, true
+	case float < -(1 << 63):
+		return 1, true
+	}
+	// The float's whole part now fits an int; its fraction breaks a tie.
+	whole := math.Trunc(float)
+	if comparison := cmp.Compare(integer, int(whole)); comparison != 0 {
+		return comparison, true
+	}
+	return cmp.Compare(whole, float), true
 }
 
 func ordered[T int | float64 | string](op string, a, b T) bool {

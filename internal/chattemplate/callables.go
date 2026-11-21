@@ -87,14 +87,13 @@ type macro struct {
 	// template's variables as they are when it is called, not the variables
 	// of the for body it may be called from.
 	root *scope
-	// depth counts the calls of this macro in progress. A macro value belongs
-	// to one render, so the count is not shared.
-	depth int
 }
 
-// maxMacroDepth bounds how deep a macro may call itself. Python gives up a
-// little under 200 levels; without a bound, a template that recurses forever
-// would overflow the stack and take the process down.
+// maxMacroDepth bounds how many macro calls may be in progress at once in a
+// render, whichever macros they are. Python gives up at a depth that depends
+// on its own call stack, a little under 200 when measured; this fixed bound
+// is lower, so that a template which recurses forever fails here as it does
+// there instead of overflowing the stack and taking the process down.
 const maxMacroDepth = 150
 
 // macroParam is one parameter; fallback is nil when it has no default.
@@ -104,18 +103,18 @@ type macroParam struct {
 }
 
 func (m *macro) call(args []any, kwargs []namedValue) (any, error) {
-	if m.depth == maxMacroDepth {
+	if m.root.macroDepth == maxMacroDepth {
 		return nil, pyError("RecursionError", "maximum recursion depth exceeded")
 	}
-	m.depth++
-	defer func() { m.depth-- }()
+	m.root.macroDepth++
+	defer func() { m.root.macroDepth-- }()
 
 	if len(args) > len(m.params) {
 		return nil, pyError("TypeError", "macro '%s' takes not more than %d argument(s)", m.name, len(m.params))
 	}
 	for _, keyword := range kwargs {
 		// A keyword must name a parameter that was not given by position.
-		if m.paramIndex(keyword.name) < len(args) {
+		if paramIndex(m.params, keyword.name) < len(args) {
 			return nil, pyError("TypeError", "macro '%s' takes no keyword argument '%s'", m.name, keyword.name)
 		}
 	}
@@ -148,8 +147,8 @@ func (m *macro) call(args []any, kwargs []namedValue) (any, error) {
 }
 
 // paramIndex returns the position of the named parameter, or -1.
-func (m *macro) paramIndex(name string) int {
-	for i, param := range m.params {
+func paramIndex(params []macroParam, name string) int {
+	for i, param := range params {
 		if param.name == name {
 			return i
 		}

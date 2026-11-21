@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/bigshort2022/mlx-lm-go/internal/hub"
 )
 
 // goldenFamilies maps each fixture family to the model whose chat template
@@ -96,8 +94,17 @@ func (r requestRow) input() Input {
 	}
 }
 
-// readRows decodes every line of a JSON Lines fixture.
-func readRows[Row any](t *testing.T, path string) []Row {
+// The exact size of each fixture. A file that lost rows must fail its test,
+// not pass with the rows that are left.
+const (
+	goldenRowCount       = 19
+	differentialRowCount = 224
+	semanticsRowCount    = 330
+)
+
+// readRows decodes every line of a JSON Lines fixture, which must have
+// exactly the given number of rows.
+func readRows[Row any](t testing.TB, path string, want int) []Row {
 	t.Helper()
 	file, err := os.Open(path)
 	if err != nil {
@@ -112,34 +119,35 @@ func readRows[Row any](t *testing.T, path string) []Row {
 		}
 		rows = append(rows, row)
 	}
-	if len(rows) == 0 {
-		t.Fatalf("%s has no rows", path)
+	if len(rows) != want {
+		t.Fatalf("%s has %d rows, want %d", path, len(rows), want)
 	}
 	return rows
 }
 
-// loadModelTemplate loads a model's template from the local Hugging Face
-// cache. The test is skipped when the model has not been downloaded.
-func loadModelTemplate(t *testing.T, repo string) *Template {
+// vendoredDir is the copy of a family's chat template and special tokens
+// under testdata. The fixture tests render with it, so they need no model
+// download; TestVendoredTemplatesMatchTheModels keeps it honest.
+func vendoredDir(family string) string {
+	return filepath.Join("testdata", family)
+}
+
+func loadVendoredTemplate(t *testing.T, family string) *Template {
 	t.Helper()
-	dir, err := hub.Resolve(repo)
+	tmpl, err := Load(vendoredDir(family))
 	if err != nil {
-		t.Skipf("model not available: %v", err)
-	}
-	tmpl, err := Load(dir)
-	if err != nil {
-		t.Fatalf("Load(%s): %v", dir, err)
+		t.Fatalf("Load(%s): %v", vendoredDir(family), err)
 	}
 	return tmpl
 }
 
 // checkRequestRows renders every row of a fixture with the family's template
 // and compares the outcome with Python's.
-func checkRequestRows(t *testing.T, path func(family string) string) {
+func checkRequestRows(t *testing.T, path func(family string) string, want int) {
 	for _, family := range goldenFamilies {
 		t.Run(family.name, func(t *testing.T) {
-			tmpl := loadModelTemplate(t, family.repo)
-			for _, row := range readRows[requestRow](t, path(family.name)) {
+			tmpl := loadVendoredTemplate(t, family.name)
+			for _, row := range readRows[requestRow](t, path(family.name), want) {
 				t.Run(row.Name, func(t *testing.T) {
 					got, err := tmpl.Render(row.input())
 					if mismatch := row.check(got, err); mismatch != nil {
@@ -160,11 +168,11 @@ func differentialPath(family string) string {
 }
 
 func TestRenderMatchesGolden(t *testing.T) {
-	checkRequestRows(t, goldenPath)
+	checkRequestRows(t, goldenPath, goldenRowCount)
 }
 
 // The differential rows are requests a server can receive that the golden
 // rows do not cover, including the ones Python rejects.
 func TestRenderMatchesDifferential(t *testing.T) {
-	checkRequestRows(t, differentialPath)
+	checkRequestRows(t, differentialPath, differentialRowCount)
 }

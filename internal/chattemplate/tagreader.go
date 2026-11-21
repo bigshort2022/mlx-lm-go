@@ -7,10 +7,8 @@ type tagReader struct {
 	tokens []token
 	pos    int
 	line   int // of the tag, for errors at its end
-}
-
-func newTagReader(seg segment) *tagReader {
-	return &tagReader{tokens: seg.tokens, line: seg.line}
+	// macro is the macro whose body the tag is in, or nil.
+	macro *macroStmt
 }
 
 // peek returns the current token, or a tokEnd token past the last one.

@@ -3,6 +3,7 @@ package chattemplate
 import (
 	"fmt"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 	"unicode"
@@ -51,7 +52,7 @@ func typeName(value any) string {
 		return "Undefined"
 	case bool:
 		return "bool"
-	case int:
+	case int, *big.Int:
 		return "int"
 	case float64:
 		return "float"
@@ -109,6 +110,8 @@ func writeRepr(out *strings.Builder, value any) error {
 		}
 	case int:
 		out.WriteString(strconv.Itoa(value))
+	case *big.Int:
+		out.WriteString(value.String())
 	case float64:
 		out.WriteString(pythonFloat(value))
 	case string:

@@ -12,7 +12,9 @@ func iterate(value any) ([]any, error) {
 	case undefined:
 		return nil, nil
 	case *generator:
-		return value.items, value.err
+		items, err := value.items, value.err
+		value.items, value.err = nil, nil // a generator runs once
+		return items, err
 	case *dict:
 		keys := make([]any, len(value.keys))
 		for i, key := range value.keys {

@@ -22,30 +22,54 @@ var specialTokenNames = []string{"bos_token", "eos_token", "pad_token", "unk_tok
 // (bos_token, eos_token, pad_token, unk_token) come from tokenizer_config.json
 // and are available to the template under those names.
 func Load(dir string) (*Template, error) {
+	source, specialTokens, err := readModel(dir)
+	if err != nil {
+		return nil, err
+	}
+	return Parse(source, specialTokens)
+}
+
+// LoadSource builds a Template from the given template source instead of the
+// model's own, with the special-token strings Load reads from dir.
+func LoadSource(dir, source string) (*Template, error) {
 	tokenizerConfig, err := readTokenizerConfig(dir)
 	if err != nil {
 		return nil, err
 	}
-	specialTokens := map[string]string{}
-	for _, name := range specialTokenNames {
-		if token, ok := specialToken(tokenizerConfig[name]); ok {
-			specialTokens[name] = token
-		}
-	}
+	return Parse(source, specialTokens(tokenizerConfig))
+}
 
-	source, err := os.ReadFile(filepath.Join(dir, templateFile))
+// readModel returns the template source and the special tokens found in a
+// model directory.
+func readModel(dir string) (source string, tokens map[string]string, err error) {
+	tokenizerConfig, err := readTokenizerConfig(dir)
+	if err != nil {
+		return "", nil, err
+	}
+	file, err := os.ReadFile(filepath.Join(dir, templateFile))
 	if err == nil {
-		return Parse(string(source), specialTokens)
+		return string(file), specialTokens(tokenizerConfig), nil
 	}
 	if !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
+		return "", nil, err
 	}
 	var inline string
 	if err := json.Unmarshal(tokenizerConfig["chat_template"], &inline); err != nil || inline == "" {
-		return nil, fmt.Errorf("no chat template in %s: neither %s nor a \"chat_template\" string in %s",
+		return "", nil, fmt.Errorf("no chat template in %s: neither %s nor a \"chat_template\" string in %s",
 			dir, templateFile, tokenizerConfigFile)
 	}
-	return Parse(inline, specialTokens)
+	return inline, specialTokens(tokenizerConfig), nil
+}
+
+// specialTokens picks the special tokens out of tokenizer_config.json.
+func specialTokens(tokenizerConfig map[string]json.RawMessage) map[string]string {
+	tokens := map[string]string{}
+	for _, name := range specialTokenNames {
+		if token, ok := specialToken(tokenizerConfig[name]); ok {
+			tokens[name] = token
+		}
+	}
+	return tokens
 }
 
 // readTokenizerConfig returns the top-level entries of tokenizer_config.json,

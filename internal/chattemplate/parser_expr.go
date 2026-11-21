@@ -188,6 +188,13 @@ var constants = map[string]any{
 	"none": nil, "None": nil,
 }
 
+// macroSpecials are the variables Jinja defines inside every macro body.
+var macroSpecials = []string{"varargs", "kwargs", "caller"}
+
+// unsupportedLoopAttributes are the methods of Jinja's loop variable that
+// this package does not implement.
+var unsupportedLoopAttributes = []string{"cycle", "changed"}
+
 func (r *tagReader) parsePrimary() (expr, error) {
 	tok := r.peek()
 	switch {
@@ -202,10 +209,17 @@ func (r *tagReader) parsePrimary() (expr, error) {
 		r.pos++
 		return literalExpr{value}, nil
 	case tok.kind == tokName:
-		r.pos++
 		if value, ok := constants[tok.text]; ok {
+			r.pos++
 			return literalExpr{value}, nil
 		}
+		// In a macro body Jinja binds these names to the call's extra
+		// arguments and to the block of a {% call %}, unless the macro
+		// declares a parameter of that name.
+		if r.macro != nil && slices.Contains(macroSpecials, tok.text) && paramIndex(r.macro.params, tok.text) < 0 {
+			return nil, r.errorf("%q in a macro is not supported", tok.text)
+		}
+		r.pos++
 		return nameExpr(tok.text), nil
 	case r.acceptOp("("):
 		value, err := r.parseExpression()
@@ -233,6 +247,10 @@ func (r *tagReader) parsePostfix(value expr) (expr, error) {
 			if name.kind != tokName {
 				r.pos--
 				return nil, r.errorf("expected an attribute name, found %s", name.describe())
+			}
+			if object, ok := value.(nameExpr); ok && object == "loop" && slices.Contains(unsupportedLoopAttributes, name.text) {
+				r.pos--
+				return nil, r.errorf("loop.%s is not supported", name.text)
 			}
 			value = &attrExpr{object: value, name: name.text}
 		case r.acceptOp("["):
@@ -309,6 +327,9 @@ func (r *tagReader) parseArguments() (args []expr, kwargs []namedExpr, err error
 		}
 		name := r.peek()
 		if name.kind == tokName && r.followedBy(tokOperator, "=") {
+			if slices.ContainsFunc(kwargs, func(earlier namedExpr) bool { return earlier.name == name.text }) {
+				return nil, nil, r.errorf("keyword argument %q repeated", name.text)
+			}
 			r.pos += 2
 			value, err := r.parseExpression()
 			if err != nil {

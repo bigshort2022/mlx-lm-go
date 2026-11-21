@@ -6,6 +6,7 @@ package chattemplate
 //	undefined   a missing variable, attribute or item
 //	bool
 //	int
+//	*big.Int    an integer read from the request that does not fit an int
 //	float64
 //	string
 //	safeString  text the safe filter marked as not needing escaping
