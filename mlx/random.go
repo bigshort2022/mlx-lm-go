@@ -14,6 +14,6 @@ func Seed(seed uint64) {
 func Categorical(logits *Array, axis int) *Array {
 	return apply(func(res *Array, s C.mlx_stream) C.int {
 		var globalKey C.mlx_array // empty: draw from the generator Seed seeds
-		return C.mlx_random_categorical(&res.c, logits.c, C.int(axis), globalKey, s)
+		return C.mlx_random_categorical(&res.c, logits.c, cInt(axis), globalKey, s)
 	})
 }

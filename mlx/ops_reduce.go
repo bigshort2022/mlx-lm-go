@@ -11,7 +11,7 @@ import "C"
 // the result keeps that axis with size one.
 func Argmax(a *Array, axis int, keepDims bool) *Array {
 	return apply(func(res *Array, s C.mlx_stream) C.int {
-		return C.mlx_argmax_axis(&res.c, a.c, C.int(axis), C.bool(keepDims), s)
+		return C.mlx_argmax_axis(&res.c, a.c, cInt(axis), C.bool(keepDims), s)
 	})
 }
 
@@ -19,7 +19,7 @@ func Argmax(a *Array, axis int, keepDims bool) *Array {
 func Softmax(a *Array, axis int) *Array {
 	const precise = false // the default of Python's mx.softmax
 	return apply(func(res *Array, s C.mlx_stream) C.int {
-		return C.mlx_softmax_axis(&res.c, a.c, C.int(axis), precise, s)
+		return C.mlx_softmax_axis(&res.c, a.c, cInt(axis), precise, s)
 	})
 }
 
@@ -27,7 +27,7 @@ func Softmax(a *Array, axis int) *Array {
 // keepDims the result keeps that axis with size one.
 func LogSumExp(a *Array, axis int, keepDims bool) *Array {
 	return apply(func(res *Array, s C.mlx_stream) C.int {
-		return C.mlx_logsumexp_axis(&res.c, a.c, C.int(axis), C.bool(keepDims), s)
+		return C.mlx_logsumexp_axis(&res.c, a.c, cInt(axis), C.bool(keepDims), s)
 	})
 }
 
@@ -39,21 +39,21 @@ func Cumsum(a *Array, axis int) *Array {
 		inclusive = true
 	)
 	return apply(func(res *Array, s C.mlx_stream) C.int {
-		return C.mlx_cumsum_axis(&res.c, a.c, C.int(axis), reverse, inclusive, C.mlx_optional_dtype{}, s)
+		return C.mlx_cumsum_axis(&res.c, a.c, cInt(axis), reverse, inclusive, C.mlx_optional_dtype{}, s)
 	})
 }
 
 // Sort returns a sorted in ascending order along axis.
 func Sort(a *Array, axis int) *Array {
 	return apply(func(res *Array, s C.mlx_stream) C.int {
-		return C.mlx_sort_axis(&res.c, a.c, C.int(axis), s)
+		return C.mlx_sort_axis(&res.c, a.c, cInt(axis), s)
 	})
 }
 
 // Argsort returns the indices that sort a in ascending order along axis.
 func Argsort(a *Array, axis int) *Array {
 	return apply(func(res *Array, s C.mlx_stream) C.int {
-		return C.mlx_argsort_axis(&res.c, a.c, C.int(axis), s)
+		return C.mlx_argsort_axis(&res.c, a.c, cInt(axis), s)
 	})
 }
 
@@ -62,7 +62,7 @@ func Argsort(a *Array, axis int) *Array {
 // select elements no larger, and those after it elements no smaller.
 func ArgPartition(a *Array, kth, axis int) *Array {
 	return apply(func(res *Array, s C.mlx_stream) C.int {
-		return C.mlx_argpartition_axis(&res.c, a.c, C.int(kth), C.int(axis), s)
+		return C.mlx_argpartition_axis(&res.c, a.c, cInt(kth), cInt(axis), s)
 	})
 }
 
@@ -70,7 +70,7 @@ func ArgPartition(a *Array, kth, axis int) *Array {
 // that axis with size one.
 func Max(a *Array, axis int, keepDims bool) *Array {
 	return apply(func(res *Array, s C.mlx_stream) C.int {
-		return C.mlx_max_axis(&res.c, a.c, C.int(axis), C.bool(keepDims), s)
+		return C.mlx_max_axis(&res.c, a.c, cInt(axis), C.bool(keepDims), s)
 	})
 }
 
@@ -80,7 +80,7 @@ func Max(a *Array, axis int, keepDims bool) *Array {
 func CumsumReverse(a *Array, axis int, inclusive bool) *Array {
 	const reverse = true
 	return apply(func(res *Array, s C.mlx_stream) C.int {
-		return C.mlx_cumsum_axis(&res.c, a.c, C.int(axis), reverse, C.bool(inclusive), C.mlx_optional_dtype{}, s)
+		return C.mlx_cumsum_axis(&res.c, a.c, cInt(axis), reverse, C.bool(inclusive), C.mlx_optional_dtype{}, s)
 	})
 }
 
@@ -88,6 +88,6 @@ func CumsumReverse(a *Array, axis int, inclusive bool) *Array {
 // keeps that axis with size one. The sum of a bool array is an int32 count.
 func Sum(a *Array, axis int, keepDims bool) *Array {
 	return apply(func(res *Array, s C.mlx_stream) C.int {
-		return C.mlx_sum_axis(&res.c, a.c, C.int(axis), C.bool(keepDims), s)
+		return C.mlx_sum_axis(&res.c, a.c, cInt(axis), C.bool(keepDims), s)
 	})
 }

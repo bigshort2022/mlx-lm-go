@@ -73,6 +73,16 @@ func cInts(values []int) []C.int {
 	return out
 }
 
+// cDType converts a DType to the mlx_dtype MLX takes. It panics with *Error
+// if MLX has no such type, because mlx-c uses the value as an index into a
+// table without checking it.
+func cDType(d DType) C.mlx_dtype {
+	if d < Bool || d > Complex64 {
+		panic(&Error{Msg: fmt.Sprintf("%v is not an MLX element type", d)})
+	}
+	return C.mlx_dtype(d)
+}
+
 // created adopts the result of an mlx-c constructor, which reports failure by
 // returning an empty handle.
 func created(c C.mlx_array) *Array {
@@ -134,7 +144,7 @@ func Int(v int32) *Array {
 func Zeros(dtype DType, shape ...int) *Array {
 	dims := cInts(shape)
 	return apply(func(res *Array, s C.mlx_stream) C.int {
-		return C.mlx_zeros(&res.c, unsafe.SliceData(dims), C.size_t(len(dims)), C.mlx_dtype(dtype), s)
+		return C.mlx_zeros(&res.c, unsafe.SliceData(dims), C.size_t(len(dims)), cDType(dtype), s)
 	})
 }
 

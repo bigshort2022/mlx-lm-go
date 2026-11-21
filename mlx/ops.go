@@ -101,7 +101,7 @@ func Where(cond, x, y *Array) *Array {
 // AsType returns a converted to the given element type.
 func AsType(a *Array, dtype DType) *Array {
 	return apply(func(res *Array, s C.mlx_stream) C.int {
-		return C.mlx_astype(&res.c, a.c, C.mlx_dtype(dtype), s)
+		return C.mlx_astype(&res.c, a.c, cDType(dtype), s)
 	})
 }
 

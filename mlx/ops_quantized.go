@@ -34,7 +34,8 @@ func Dequantize(w, scales, biases *Array, groupSize, bits int, mode string) *Arr
 	})
 }
 
-// optionalInt returns v as a present mlx_optional_int.
+// optionalInt returns v as a present mlx_optional_int. It panics with *Error
+// if v does not fit in a C int.
 func optionalInt(v int) C.mlx_optional_int {
-	return C.mlx_optional_int{value: C.int(v), has_value: true}
+	return C.mlx_optional_int{value: cInt(v), has_value: true}
 }

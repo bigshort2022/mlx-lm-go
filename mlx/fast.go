@@ -28,8 +28,8 @@ func RoPE(x *Array, dims int, traditional bool, base, scale float32, offset int)
 	return apply(func(res *Array, s C.mlx_stream) C.int {
 		cbase := C.mlx_optional_float{value: C.float(base), has_value: true}
 		var noFreqs C.mlx_array // frequencies come from base
-		return C.mlx_fast_rope(&res.c, x.c, C.int(dims), C.bool(traditional), cbase, C.float(scale),
-			C.int(offset), noFreqs, s)
+		return C.mlx_fast_rope(&res.c, x.c, cInt(dims), C.bool(traditional), cbase, C.float(scale),
+			cInt(offset), noFreqs, s)
 	})
 }
 

@@ -34,14 +34,14 @@ func Transpose(a *Array, axes ...int) *Array {
 // ExpandDims returns a with a dimension of size one inserted at axis.
 func ExpandDims(a *Array, axis int) *Array {
 	return apply(func(res *Array, s C.mlx_stream) C.int {
-		return C.mlx_expand_dims(&res.c, a.c, C.int(axis), s)
+		return C.mlx_expand_dims(&res.c, a.c, cInt(axis), s)
 	})
 }
 
 // Squeeze returns a without the given axis, which must have size one.
 func Squeeze(a *Array, axis int) *Array {
 	return apply(func(res *Array, s C.mlx_stream) C.int {
-		return C.mlx_squeeze_axis(&res.c, a.c, C.int(axis), s)
+		return C.mlx_squeeze_axis(&res.c, a.c, cInt(axis), s)
 	})
 }
 
@@ -50,7 +50,7 @@ func Concatenate(axis int, arrs ...*Array) *Array {
 	v := vector(arrs)
 	defer C.mlx_vector_array_free(v)
 	return apply(func(res *Array, s C.mlx_stream) C.int {
-		return C.mlx_concatenate_axis(&res.c, v, C.int(axis), s)
+		return C.mlx_concatenate_axis(&res.c, v, cInt(axis), s)
 	})
 }
 
@@ -74,7 +74,7 @@ func Slice(a *Array, start, stop []int) *Array {
 // repeat.
 func Take(a, indices *Array, axis int) *Array {
 	return apply(func(res *Array, s C.mlx_stream) C.int {
-		return C.mlx_take_axis(&res.c, a.c, indices.c, C.int(axis), s)
+		return C.mlx_take_axis(&res.c, a.c, indices.c, cInt(axis), s)
 	})
 }
 
@@ -82,7 +82,7 @@ func Take(a, indices *Array, axis int) *Array {
 // indices has as many dimensions as a.
 func TakeAlongAxis(a, indices *Array, axis int) *Array {
 	return apply(func(res *Array, s C.mlx_stream) C.int {
-		return C.mlx_take_along_axis(&res.c, a.c, indices.c, C.int(axis), s)
+		return C.mlx_take_along_axis(&res.c, a.c, indices.c, cInt(axis), s)
 	})
 }
 
@@ -90,7 +90,7 @@ func TakeAlongAxis(a, indices *Array, axis int) *Array {
 // values broadcasts against indices.
 func PutAlongAxis(a, indices, values *Array, axis int) *Array {
 	return apply(func(res *Array, s C.mlx_stream) C.int {
-		return C.mlx_put_along_axis(&res.c, a.c, indices.c, values.c, C.int(axis), s)
+		return C.mlx_put_along_axis(&res.c, a.c, indices.c, values.c, cInt(axis), s)
 	})
 }
 
@@ -116,6 +116,6 @@ func SliceUpdate(a, update *Array, start, stop []int) *Array {
 // against indices.
 func ScatterAddAxis(a, indices, values *Array, axis int) *Array {
 	return apply(func(res *Array, s C.mlx_stream) C.int {
-		return C.mlx_scatter_add_axis(&res.c, a.c, indices.c, values.c, C.int(axis), s)
+		return C.mlx_scatter_add_axis(&res.c, a.c, indices.c, values.c, cInt(axis), s)
 	})
 }
