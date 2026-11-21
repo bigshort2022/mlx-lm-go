@@ -24,11 +24,11 @@
     "headers": [
       [
         "Server",
-        "BaseHTTP/0.6 Python/3.13.13"
+        "BaseHTTP Python/3.15.2"
       ],
       [
         "Date",
-        "Sat, 21 Nov 2026 11:30:17 GMT"
+        "Sat, 21 Nov 2026 12:24:31 GMT"
       ],
       [
         "Content-type",
@@ -51,6 +51,6 @@
         "*"
       ]
     ],
-    "body": ": keepalive 1/1\n\ndata: {\"id\": \"chatcmpl-3f7afefc-49dc-4bca-a832-9253bbef65d4\", \"system_fingerprint\": \"0.31.3-0.31.2-macOS-26.4.1-arm64-arm-64bit-Mach-O-applegpu_g16s\", \"object\": \"chat.completion.chunk\", \"model\": \"default_model\", \"created\": 1795260617, \"choices\": [{\"index\": 0, \"finish_reason\": null, \"delta\": {\"role\": \"assistant\", \"content\": \"1\"}}]}\n\ndata: {\"id\": \"chatcmpl-3f7afefc-49dc-4bca-a832-9253bbef65d4\", \"system_fingerprint\": \"0.31.3-0.31.2-macOS-26.4.1-arm64-arm-64bit-Mach-O-applegpu_g16s\", \"object\": \"chat.completion.chunk\", \"model\": \"default_model\", \"created\": 1795260617, \"choices\": [{\"index\": 0, \"finish_reason\": null, \"delta\": {\"role\": \"assistant\", \"content\": \",\"}}]}\n\ndata: {\"id\": \"chatcmpl-3f7afefc-49dc-4bca-a832-9253bbef65d4\", \"system_fingerprint\": \"0.31.3-0.31.2-macOS-26.4.1-arm64-arm-64bit-Mach-O-applegpu_g16s\", \"object\": \"chat.completion.chunk\", \"model\": \"default_model\", \"created\": 1795260617, \"choices\": [{\"index\": 0, \"finish_reason\": null, \"delta\": {\"role\": \"assistant\", \"content\": \" 2\"}}]}\n\ndata: {\"id\": \"chatcmpl-3f7afefc-49dc-4bca-a832-9253bbef65d4\", \"system_fingerprint\": \"0.31.3-0.31.2-macOS-26.4.1-arm64-arm-64bit-Mach-O-applegpu_g16s\", \"object\": \"chat.completion.chunk\", \"model\": \"default_model\", \"created\": 1795260617, \"choices\": [{\"index\": 0, \"finish_reason\": null, \"delta\": {\"role\": \"assistant\", \"content\": \",\"}}]}\n\ndata: {\"id\": \"chatcmpl-3f7afefc-49dc-4bca-a832-9253bbef65d4\", \"system_fingerprint\": \"0.31.3-0.31.2-macOS-26.4.1-arm64-arm-64bit-Mach-O-applegpu_g16s\", \"object\": \"chat.completion.chunk\", \"model\": \"default_model\", \"created\": 1795260617, \"choices\": [{\"index\": 0, \"finish_reason\": \"stop\", \"delta\": {\"role\": \"assistant\"}}]}\n\ndata: [DONE]\n\n"
+    "body": ": keepalive 1/1\n\ndata: {\"id\": \"chatcmpl-3e26d702-f9d1-4919-be36-f4c155f743f6\", \"system_fingerprint\": \"0.32.2-0.32.4-macOS-26.4.1-arm64-arm-64bit-Mach-O-applegpu_g16s\", \"object\": \"chat.completion.chunk\", \"model\": \"default_model\", \"created\": 1795263871, \"choices\": [{\"index\": 0, \"finish_reason\": null, \"delta\": {\"role\": \"assistant\", \"content\": \"1\"}}]}\n\ndata: {\"id\": \"chatcmpl-3e26d702-f9d1-4919-be36-f4c155f743f6\", \"system_fingerprint\": \"0.32.2-0.32.4-macOS-26.4.1-arm64-arm-64bit-Mach-O-applegpu_g16s\", \"object\": \"chat.completion.chunk\", \"model\": \"default_model\", \"created\": 1795263871, \"choices\": [{\"index\": 0, \"finish_reason\": null, \"delta\": {\"role\": \"assistant\", \"content\": \",\"}}]}\n\ndata: {\"id\": \"chatcmpl-3e26d702-f9d1-4919-be36-f4c155f743f6\", \"system_fingerprint\": \"0.32.2-0.32.4-macOS-26.4.1-arm64-arm-64bit-Mach-O-applegpu_g16s\", \"object\": \"chat.completion.chunk\", \"model\": \"default_model\", \"created\": 1795263871, \"choices\": [{\"index\": 0, \"finish_reason\": null, \"delta\": {\"role\": \"assistant\", \"content\": \" 2\"}}]}\n\ndata: {\"id\": \"chatcmpl-3e26d702-f9d1-4919-be36-f4c155f743f6\", \"system_fingerprint\": \"0.32.2-0.32.4-macOS-26.4.1-arm64-arm-64bit-Mach-O-applegpu_g16s\", \"object\": \"chat.completion.chunk\", \"model\": \"default_model\", \"created\": 1795263871, \"choices\": [{\"index\": 0, \"finish_reason\": null, \"delta\": {\"role\": \"assistant\", \"content\": \",\"}}]}\n\ndata: {\"id\": \"chatcmpl-3e26d702-f9d1-4919-be36-f4c155f743f6\", \"system_fingerprint\": \"0.32.2-0.32.4-macOS-26.4.1-arm64-arm-64bit-Mach-O-applegpu_g16s\", \"object\": \"chat.completion.chunk\", \"model\": \"default_model\", \"created\": 1795263871, \"choices\": [{\"index\": 0, \"finish_reason\": \"stop\", \"delta\": {\"role\": \"assistant\"}}]}\n\ndata: [DONE]\n\n"
   }
 }

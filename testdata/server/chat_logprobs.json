@@ -17,6 +17,33 @@
     }
   },
   "response": {
-    "connection_error": "RemoteDisconnected: Remote end closed connection without response"
+    "status": 400,
+    "headers": [
+      [
+        "Server",
+        "BaseHTTP Python/3.15.2"
+      ],
+      [
+        "Date",
+        "Sat, 21 Nov 2026 12:24:33 GMT"
+      ],
+      [
+        "Content-type",
+        "application/json"
+      ],
+      [
+        "Access-Control-Allow-Origin",
+        "*"
+      ],
+      [
+        "Access-Control-Allow-Methods",
+        "*"
+      ],
+      [
+        "Access-Control-Allow-Headers",
+        "*"
+      ]
+    ],
+    "body": "{\"error\": \"logprobs must be of type bool\"}"
   }
 }

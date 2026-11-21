@@ -15,11 +15,11 @@
     "headers": [
       [
         "Server",
-        "BaseHTTP/0.6 Python/3.13.13"
+        "BaseHTTP Python/3.15.2"
       ],
       [
         "Date",
-        "Sat, 21 Nov 2026 11:30:19 GMT"
+        "Sat, 21 Nov 2026 12:24:34 GMT"
       ],
       [
         "Content-type",
@@ -42,6 +42,6 @@
         "413"
       ]
     ],
-    "body": "{\"id\": \"cmpl-b2b34606-0cbf-426c-8cf9-f583c291b108\", \"system_fingerprint\": \"0.31.3-0.31.2-macOS-26.4.1-arm64-arm-64bit-Mach-O-applegpu_g16s\", \"object\": \"text_completion\", \"model\": \"default_model\", \"created\": 1795260619, \"choices\": [{\"index\": 0, \"finish_reason\": \"length\", \"text\": \"4, 5, 6\"}], \"usage\": {\"prompt_tokens\": 8, \"completion_tokens\": 8, \"total_tokens\": 16, \"prompt_tokens_details\": {\"cached_tokens\": 0}}}"
+    "body": "{\"id\": \"cmpl-cae02f68-c440-4cf6-81dd-4ace13bbc440\", \"system_fingerprint\": \"0.32.2-0.32.4-macOS-26.4.1-arm64-arm-64bit-Mach-O-applegpu_g16s\", \"object\": \"text_completion\", \"model\": \"default_model\", \"created\": 1795263874, \"choices\": [{\"index\": 0, \"finish_reason\": \"length\", \"text\": \"4, 5, 6\"}], \"usage\": {\"prompt_tokens\": 8, \"completion_tokens\": 8, \"total_tokens\": 16, \"prompt_tokens_details\": {\"cached_tokens\": 0}}}"
   }
 }

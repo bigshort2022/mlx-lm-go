@@ -21,11 +21,11 @@
     "headers": [
       [
         "Server",
-        "BaseHTTP/0.6 Python/3.13.13"
+        "BaseHTTP Python/3.15.2"
       ],
       [
         "Date",
-        "Sat, 21 Nov 2026 11:30:16 GMT"
+        "Sat, 21 Nov 2026 12:24:31 GMT"
       ],
       [
         "Content-type",
@@ -48,6 +48,6 @@
         "453"
       ]
     ],
-    "body": "{\"id\": \"chatcmpl-f8095f87-930b-443f-a003-4ec066b0180e\", \"system_fingerprint\": \"0.31.3-0.31.2-macOS-26.4.1-arm64-arm-64bit-Mach-O-applegpu_g16s\", \"object\": \"chat.completion\", \"model\": \"default_model\", \"created\": 1795260616, \"choices\": [{\"index\": 0, \"finish_reason\": \"length\", \"message\": {\"role\": \"assistant\", \"content\": \"1, 2\"}}], \"usage\": {\"prompt_tokens\": 37, \"completion_tokens\": 4, \"total_tokens\": 41, \"prompt_tokens_details\": {\"cached_tokens\": 36}}}"
+    "body": "{\"id\": \"chatcmpl-a197e515-e0fa-4694-97da-eae549a06db2\", \"system_fingerprint\": \"0.32.2-0.32.4-macOS-26.4.1-arm64-arm-64bit-Mach-O-applegpu_g16s\", \"object\": \"chat.completion\", \"model\": \"default_model\", \"created\": 1795263871, \"choices\": [{\"index\": 0, \"finish_reason\": \"length\", \"message\": {\"role\": \"assistant\", \"content\": \"1, 2\"}}], \"usage\": {\"prompt_tokens\": 37, \"completion_tokens\": 4, \"total_tokens\": 41, \"prompt_tokens_details\": {\"cached_tokens\": 36}}}"
   }
 }
