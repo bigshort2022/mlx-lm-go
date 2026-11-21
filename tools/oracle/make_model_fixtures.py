@@ -25,6 +25,7 @@ import mlx.core as mx
 from mlx_lm import load
 from mlx_lm.generate import generate_step
 from mlx_lm.models.base import create_attention_mask
+from mlx_lm.models.cache import make_prompt_cache
 from mlx_lm.sample_utils import (
     apply_min_p,
     apply_top_k,
@@ -124,6 +125,11 @@ def model_fixtures():
     l0 = h_mid + mlp
     final = inner(x)
     logits = model(x)
+    # The same eight tokens through a cache, seven then one. Float16 round-off
+    # differs between the L=1 and L=8 kernel paths, so this is not logits_last.
+    prompt_cache = make_prompt_cache(model)
+    model(x[:, :7], cache=prompt_cache)
+    incremental = model(x[:, 7:], cache=prompt_cache)
     mx.save_safetensors(
         str(out / "layers.safetensors"),
         {
@@ -136,6 +142,7 @@ def model_fixtures():
             "l0_out": f32(l0),
             "final_norm": f32(final),
             "logits_last": f32(logits[:, -1, :]),
+            "incremental_7_1_logits_last": f32(incremental[:, -1, :]),
         },
         metadata={"model": MODEL, "mask": str(mask)},
     )

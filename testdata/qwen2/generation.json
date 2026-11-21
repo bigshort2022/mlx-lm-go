@@ -178,7 +178,7 @@
    ],
    "greedy_text": "1, 2, 3, 4, 5<|im_end|>",
    "peak_memory_bytes": 1024699812,
-   "seconds": 0.103
+   "seconds": 0.113
   },
   {
    "messages": [
@@ -329,8 +329,8 @@
     151645
    ],
    "greedy_text": "Paris.<|im_end|>",
-   "peak_memory_bytes": 1023719844,
-   "seconds": 0.036
+   "peak_memory_bytes": 1023670692,
+   "seconds": 0.039
   },
   {
    "messages": [
@@ -500,8 +500,8 @@
     151645
    ],
    "greedy_text": "Wave upon wave,\nThe sea whispers secrets,\nSalt in my breath.<|im_end|>",
-   "peak_memory_bytes": 1026026916,
-   "seconds": 0.105
+   "peak_memory_bytes": 1025699236,
+   "seconds": 0.116
   },
   {
    "messages": [
@@ -677,8 +677,8 @@
     151645
    ],
    "greedy_text": "苹果公司是一家全球知名的科技公司，以设计和制造高质量的电子设备和软件产品而闻名。<|im_end|>",
-   "peak_memory_bytes": 1019112868,
-   "seconds": 0.143
+   "peak_memory_bytes": 1018801572,
+   "seconds": 0.154
   },
   {
    "messages": [
@@ -900,7 +900,7 @@
    ],
    "greedy_text": "Here's a simple Go function that reverses a string:\n\n```go\npackage main\n\nimport (\n\t\"fmt\"\n\t\"unicode\"\n)\n\nfunc reverseString(s string) string {\n\trunes := []rune(s)\n\tfor i, j := 0, len(runes)-1; i < j; i,",
    "peak_memory_bytes": 1034333612,
-   "seconds": 0.337
+   "seconds": 0.364
   }
  ]
 }

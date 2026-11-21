@@ -124,7 +124,7 @@ Each test loads the real weights and `layers.safetensors`, applies one layer to 
 
 ### Task 5: the cache
 
-- [ ] `TestIncrementalForwardEqualsFullForward`: feeding the first seven golden tokens and then the eighth through a state gives last-position logits within `5e-2` of the full pass.
+- [ ] `TestIncrementalForwardMatchesGolden`: feeding the first seven golden tokens and then the eighth through a state gives last-position logits within `1e-1` of `incremental_7_1_logits_last`, with the same argmax. (The cached and uncached paths legitimately differ by 0.18 in float16, in Python too, so they are not compared with each other.)
 - [ ] `TestStateOffsetCountsTokens`.
 - [ ] `TestCacheGrowsPastOneAllocationStep`: 300 single-token steps succeed and the offset is 300.
 - [ ] `TestStateFreeReleasesMemory`: active memory after `Free` and `ClearCache` returns to within 1 MiB of the level before the state was created.
