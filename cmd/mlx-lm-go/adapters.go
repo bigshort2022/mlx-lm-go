@@ -18,6 +18,17 @@ func (t serverTokenizer) NewDetokenizer() server.Detokenizer {
 	return newBPEStreamingDetokenizer(t.Tokenizer)
 }
 
+// thinkingTokens recognizes exact vocabulary entries. Qwen3 marks them as
+// added tokens but not special tokens; Qwen2 only has their component pieces.
+func (t serverTokenizer) thinkingTokens() *server.ThinkingTokens {
+	start, hasStart := t.TokenID("<think>")
+	end, hasEnd := t.TokenID("</think>")
+	if !hasStart || !hasEnd {
+		return nil
+	}
+	return &server.ThinkingTokens{Start: start, End: end}
+}
+
 // bpeStreamingDetokenizer turns the tokens of one generation into text. It is
 // a port of BPEStreamingDetokenizer in mlx_lm/tokenizer_utils.py of mlx-lm
 // 0.32.2 and returns the same pieces, so that streams, stop strings and

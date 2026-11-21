@@ -70,11 +70,13 @@ func serve(ctx context.Context, cfg server.Config, stderr io.Writer, headerTimeo
 		return nil // told to stop while the model was loading
 	}
 
+	tok := serverTokenizer{m.tokenizer}
 	handler := server.New(cfg, server.Deps{
-		Engine:    countingEngine{eng},
-		Tokenizer: serverTokenizer{m.tokenizer},
-		Template:  serverTemplate{m.template},
-		WebUI:     webui.FS(),
+		Engine:         countingEngine{eng},
+		Tokenizer:      tok,
+		Template:       serverTemplate{m.template},
+		WebUI:          webui.FS(),
+		ThinkingTokens: tok.thinkingTokens(),
 	})
 	var unused unusedConns
 	srv := &http.Server{
