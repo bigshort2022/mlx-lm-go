@@ -86,6 +86,11 @@ func checkQwenHTTP(t *testing.T, binary, model string, flagship bool) {
 	if !flagship {
 		return
 	}
+	// Pinned Python mlx-lm 0.32.2, using the same 8-token prefill and
+	// --prompt-cache-size 0: 28 prompt tokens, 4 completion tokens.
+	if got.Usage.PromptTokens != 28 || got.Usage.CompletionTokens != 4 {
+		t.Fatalf("non-thinking usage = %+v, want 28 prompt and 4 completion tokens", got.Usage)
+	}
 
 	status, modelJSON := s.get(t, "/v1/models")
 	var models struct {
@@ -118,11 +123,16 @@ func checkQwenHTTP(t *testing.T, binary, model string, flagship bool) {
 		t.Fatalf("stream usage = %+v, want buffered usage %+v and no choices", usage, got.Usage)
 	}
 
-	thinking := s.post(t, chatPath, question+`}`)
+	thinking := s.post(t, chatPath, question+`,"chat_template_kwargs":{"enable_thinking":true}}`)
+	thinkingCompletion := decodeCompletion(t, thinking)
+	if thinkingCompletion.Choices[0].FinishReason != "length" ||
+		thinkingCompletion.Usage.PromptTokens != 68 || thinkingCompletion.Usage.CompletionTokens != 48 {
+		t.Fatalf("thinking completion = %+v, want Python's length stop with usage 68/48", thinkingCompletion)
+	}
 	var thought struct {
 		Choices []struct {
 			Message struct {
-				Content   *string
+				Content   json.RawMessage
 				Reasoning string
 			}
 		}
@@ -130,9 +140,10 @@ func checkQwenHTTP(t *testing.T, binary, model string, flagship bool) {
 	if err := json.Unmarshal([]byte(thinking), &thought); err != nil {
 		t.Fatal(err)
 	}
-	if len(thought.Choices) != 1 || strings.TrimSpace(thought.Choices[0].Message.Reasoning) == "" ||
+	if len(thought.Choices) != 1 || string(thought.Choices[0].Message.Content) != "null" ||
+		strings.TrimSpace(thought.Choices[0].Message.Reasoning) == "" ||
 		strings.Contains(thinking, "<think>") || strings.Contains(thinking, "</think>") {
-		t.Fatalf("thinking reply does not separate reasoning from content: %s", thinking)
+		t.Fatalf("thinking reply does not send reasoning with null content: %s", thinking)
 	}
 
 	raw := decodeCompletion(t, s.post(t, "/v1/completions", `{"prompt":"1, 2, 3, 4,","max_tokens":6}`))
