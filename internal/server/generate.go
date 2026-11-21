@@ -37,16 +37,20 @@ func (s *server) run(w http.ResponseWriter, r *http.Request, j job) {
 // written after generate has given the turn back, so a client that is slow to
 // take it delays nobody else.
 func (s *server) runBuffered(w http.ResponseWriter, r *http.Request, j job, out reply) {
-	var text strings.Builder
-	res, err := s.generate(r.Context(), j, func() {}, func(piece string) error {
-		text.WriteString(piece)
+	var text, reasoning strings.Builder
+	res, err := s.generate(r.Context(), j, func() {}, func(piece string, thinking bool) error {
+		if thinking {
+			reasoning.WriteString(piece)
+		} else {
+			text.WriteString(piece)
+		}
 		return nil
 	})
 	if err != nil {
 		writeFailure(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, out.full(text.String(), res))
+	writeJSON(w, http.StatusOK, out.full(text.String(), reasoning.String(), res))
 }
 
 // runStreamed answers with one event per piece of text as it is generated,
@@ -57,7 +61,12 @@ func (s *server) runStreamed(w http.ResponseWriter, r *http.Request, j job, out 
 	var events *eventStream
 	res, err := s.generate(r.Context(), j,
 		func() { events = startEventStream(w, s.writeTimeout) },
-		func(piece string) error { return events.send(out.chunk(piece, "")) },
+		func(piece string, thinking bool) error {
+			if thinking {
+				return events.send(out.chunk("", piece, ""))
+			}
+			return events.send(out.chunk(piece, "", ""))
+		},
 	)
 	if events == nil {
 		writeFailure(w, err) // refused before the stream began
@@ -68,7 +77,7 @@ func (s *server) runStreamed(w http.ResponseWriter, r *http.Request, j job, out 
 		_ = events.send(errorResponse{Error: err.Error()})
 		return
 	}
-	_ = events.send(out.chunk("", res.FinishReason))
+	_ = events.send(out.chunk("", "", res.FinishReason))
 	if j.usage {
 		_ = events.send(out.usageChunk(res))
 	}
@@ -99,12 +108,12 @@ func writeFailure(w http.ResponseWriter, err error) {
 // and the turn ends when generate returns.
 //
 // begin is called once the prompt is ready and generation is about to start.
-// The generated text is then handed to onText in pieces, as soon as each is
-// known not to be part of a stop string. If onText fails, generation is
-// cancelled and generate returns that error. When a stop string appears,
-// generation is cancelled too and the result reports the finish reason
-// "stop"; the token counts are still the engine's.
-func (s *server) generate(ctx context.Context, j job, begin func(), onText func(piece string) error) (engine.Result, error) {
+// The generated text is then handed to onText in order, as soon as it is
+// known not to be part of a stop string or an enabled thinking marker.
+// If onText fails, generation is cancelled and generate returns that error.
+// A user stop also cancels generation and sets the finish reason to "stop";
+// the token counts are still the engine's.
+func (s *server) generate(ctx context.Context, j job, begin func(), onText func(piece string, thinking bool) error) (engine.Result, error) {
 	if err := s.queue.acquire(ctx); err != nil {
 		return engine.Result{}, err
 	}
@@ -120,6 +129,13 @@ func (s *server) generate(ctx context.Context, j job, begin func(), onText func(
 	defer cancel()
 	detok := s.deps.Tokenizer.NewDetokenizer()
 	matcher := newStopMatcher(j.stop)
+	emit := func(piece string) error { return onText(piece, false) }
+	var thinking thinkingSplitter
+	splitThinking := j.chat && s.deps.ThinkingTokens != nil
+	if splitThinking {
+		thinking.reasoning = s.deps.ThinkingTokens.startsInReasoning(prompt)
+		emit = func(piece string) error { return thinking.add(piece, onText) }
+	}
 	var (
 		stopped bool  // a stop string was completed
 		sinkErr error // onText failed
@@ -130,7 +146,7 @@ func (s *server) generate(ctx context.Context, j job, begin func(), onText func(
 		}
 		text, hit := matcher.add(piece)
 		if text != "" {
-			sinkErr = onText(text)
+			sinkErr = emit(text)
 		}
 		stopped = hit
 		if stopped || sinkErr != nil {
@@ -143,7 +159,10 @@ func (s *server) generate(ctx context.Context, j job, begin func(), onText func(
 	if err == nil {
 		feed(detok.Flush())
 		if rest := matcher.flush(); rest != "" && !stopped && sinkErr == nil {
-			sinkErr = onText(rest)
+			sinkErr = emit(rest)
+		}
+		if splitThinking && res.FinishReason == "length" && !stopped && sinkErr == nil {
+			sinkErr = thinking.flush(onText)
 		}
 	}
 	switch {

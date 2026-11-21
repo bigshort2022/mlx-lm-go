@@ -27,18 +27,26 @@ type completionResponse struct {
 // choice carries a message (chat), a delta (chat stream) or text (text
 // completions). FinishReason is null until the last chunk of a stream.
 type choice struct {
-	Index        int          `json:"index"`
-	FinishReason *string      `json:"finish_reason"`
-	Message      *chatMessage `json:"message,omitempty"`
-	Delta        *chatMessage `json:"delta,omitempty"`
-	Text         *string      `json:"text,omitempty"`
+	Index        int              `json:"index"`
+	FinishReason *string          `json:"finish_reason"`
+	Message      *bufferedMessage `json:"message,omitempty"`
+	Delta        *chatMessage     `json:"delta,omitempty"`
+	Text         *string          `json:"text,omitempty"`
 }
 
-// chatMessage is the assistant message of a chat completion. Like the
-// reference it leaves out content when there is none.
+// chatMessage is a streamed assistant delta; absent content is omitted.
 type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content,omitempty"`
+	Role      string `json:"role"`
+	Content   string `json:"content,omitempty"`
+	Reasoning string `json:"reasoning,omitempty"`
+}
+
+// A buffered reply may also carry explicit null content (a reasoning-only
+// reply), while an empty legacy reply continues to omit content.
+type bufferedMessage struct {
+	Role      string `json:"role"`
+	Content   any    `json:"content,omitempty"` // *string, typed nil (null), or nil (omitted)
+	Reasoning string `json:"reasoning,omitempty"`
 }
 
 // usage is the token accounting of a completion.
@@ -94,10 +102,16 @@ func (p reply) body(object string, choices ...choice) completionResponse {
 }
 
 // full is the body of a completion that is not streamed.
-func (p reply) full(text string, res engine.Result) completionResponse {
+func (p reply) full(text, reasoning string, res engine.Result) completionResponse {
 	object, c := "text_completion", choice{FinishReason: &res.FinishReason, Text: &text}
 	if p.chat {
-		object, c = "chat.completion", choice{FinishReason: &res.FinishReason, Message: &chatMessage{Role: "assistant", Content: text}}
+		message := &bufferedMessage{Role: "assistant", Reasoning: reasoning}
+		if text != "" {
+			message.Content = &text
+		} else if reasoning != "" {
+			message.Content = (*string)(nil)
+		}
+		object, c = "chat.completion", choice{FinishReason: &res.FinishReason, Message: message}
 	}
 	body := p.body(object, c)
 	body.Usage = usageOf(res)
@@ -106,10 +120,10 @@ func (p reply) full(text string, res engine.Result) completionResponse {
 
 // chunk is one event of a stream. finish is empty for every event but the
 // last, which carries no text.
-func (p reply) chunk(text, finish string) completionResponse {
+func (p reply) chunk(text, reasoning, finish string) completionResponse {
 	object, c := "text_completion", choice{Text: &text}
 	if p.chat {
-		object, c = "chat.completion.chunk", choice{Delta: &chatMessage{Role: "assistant", Content: text}}
+		object, c = "chat.completion.chunk", choice{Delta: &chatMessage{Role: "assistant", Content: text, Reasoning: reasoning}}
 	}
 	if finish != "" {
 		c.FinishReason = &finish
