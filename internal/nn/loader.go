@@ -59,6 +59,13 @@ func (l *Loader) tensor(name string) *mlx.Array {
 	return a
 }
 
+// Tensor returns the named parameter and checks its shape.
+func (l *Loader) Tensor(name string, dims ...int) *mlx.Array {
+	a := l.tensor(name)
+	l.wantShape(name, a, dims...)
+	return a
+}
+
 // optional returns the named tensor if the weights have it.
 func (l *Loader) optional(name string) (*mlx.Array, bool) {
 	a, ok := l.weights[name]

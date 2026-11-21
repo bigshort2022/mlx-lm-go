@@ -14,7 +14,8 @@ import (
 	"github.com/bigshort2022/mlx-lm-go/internal/engine"
 	"github.com/bigshort2022/mlx-lm-go/internal/exec"
 	"github.com/bigshort2022/mlx-lm-go/internal/models"
-	_ "github.com/bigshort2022/mlx-lm-go/internal/models/qwen2" // the supported architectures
+	_ "github.com/bigshort2022/mlx-lm-go/internal/models/qwen2"
+	_ "github.com/bigshort2022/mlx-lm-go/internal/models/qwen3_5"
 	"github.com/bigshort2022/mlx-lm-go/internal/sample"
 	"github.com/bigshort2022/mlx-lm-go/mlx"
 )
