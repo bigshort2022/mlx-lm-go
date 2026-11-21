@@ -111,3 +111,18 @@ func Matmul(a, b *Array) *Array {
 		return C.mlx_matmul(&res.c, a.c, b.c, s)
 	})
 }
+
+// Addmm returns c + a @ b in one operation.
+func Addmm(c, a, b *Array) *Array {
+	const alpha, beta = 1, 1 // the scales of a @ b and of c
+	return apply(func(res *Array, s C.mlx_stream) C.int {
+		return C.mlx_addmm(&res.c, c.c, a.c, b.c, alpha, beta, s)
+	})
+}
+
+// GreaterEqual returns a bool array that is true where a >= b.
+func GreaterEqual(a, b *Array) *Array {
+	return apply(func(res *Array, s C.mlx_stream) C.int {
+		return C.mlx_greater_equal(&res.c, a.c, b.c, s)
+	})
+}

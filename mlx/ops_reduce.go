@@ -65,3 +65,29 @@ func ArgPartition(a *Array, kth, axis int) *Array {
 		return C.mlx_argpartition_axis(&res.c, a.c, C.int(kth), C.int(axis), s)
 	})
 }
+
+// Max returns the largest element along axis. With keepDims the result keeps
+// that axis with size one.
+func Max(a *Array, axis int, keepDims bool) *Array {
+	return apply(func(res *Array, s C.mlx_stream) C.int {
+		return C.mlx_max_axis(&res.c, a.c, C.int(axis), C.bool(keepDims), s)
+	})
+}
+
+// CumsumReverse returns the running sum of a along axis taken from the end:
+// each element becomes the sum of the elements after it, plus itself when
+// inclusive.
+func CumsumReverse(a *Array, axis int, inclusive bool) *Array {
+	const reverse = true
+	return apply(func(res *Array, s C.mlx_stream) C.int {
+		return C.mlx_cumsum_axis(&res.c, a.c, C.int(axis), reverse, C.bool(inclusive), C.mlx_optional_dtype{}, s)
+	})
+}
+
+// Sum returns the sum of the elements along axis. With keepDims the result
+// keeps that axis with size one. The sum of a bool array is an int32 count.
+func Sum(a *Array, axis int, keepDims bool) *Array {
+	return apply(func(res *Array, s C.mlx_stream) C.int {
+		return C.mlx_sum_axis(&res.c, a.c, C.int(axis), C.bool(keepDims), s)
+	})
+}

@@ -94,3 +94,35 @@ func TestArgPartitionPutsKthElementInSortedPosition(t *testing.T) {
 		}
 	})
 }
+
+func TestMax(t *testing.T) {
+	inScope(t, func() {
+		wantFloats(t, "max(axis 1)", Max(twoByThree(), 1, false), []int{2}, []float32{5, 7}, exact)
+		wantFloats(t, "max(axis 0, keepdims)", Max(twoByThree(), 0, true), []int{1, 3}, []float32{7, 5, 4}, exact)
+		wantFloats(t, "max(axis -1, keepdims)", Max(twoByThree(), -1, true), []int{2, 1}, []float32{5, 7}, exact)
+	})
+}
+
+func TestCumsumReverse(t *testing.T) {
+	inScope(t, func() {
+		// Python: mx.cumsum(a, axis=-1, reverse=True, inclusive=False)
+		wantFloats(t, "cumsum(axis -1, reverse, exclusive)", CumsumReverse(twoByThree(), -1, false), []int{2, 3},
+			[]float32{7, 2, 0, 7, 4, 0}, exact)
+		wantFloats(t, "cumsum(axis -1, reverse, inclusive)", CumsumReverse(twoByThree(), -1, true), []int{2, 3},
+			[]float32{8, 7, 2, 14, 7, 4}, exact)
+		wantFloats(t, "cumsum(axis 0, reverse, exclusive)", CumsumReverse(twoByThree(), 0, false), []int{2, 3},
+			[]float32{7, 3, 4, 0, 0, 0}, exact)
+	})
+}
+
+func TestSum(t *testing.T) {
+	inScope(t, func() {
+		wantFloats(t, "sum(axis 1)", Sum(twoByThree(), 1, false), []int{2}, []float32{8, 14}, exact)
+		wantFloats(t, "sum(axis 0, keepdims)", Sum(twoByThree(), 0, true), []int{1, 3}, []float32{8, 8, 6}, exact)
+		counts := Sum(Greater(twoByThree(), Float(2)), -1, true)
+		if counts.DType() != Int32 {
+			t.Errorf("Sum of a bool array is %v, want int32 like Python", counts.DType())
+		}
+		wantInts(t, "sum(a > 2, axis -1, keepdims)", counts, []int{2, 1}, []int32{1, 3})
+	})
+}

@@ -122,3 +122,22 @@ func TestAsType(t *testing.T) {
 		wantInts(t, "int32([1.7,-1.7,2.5])", got, []int{3}, []int32{1, -1, 2})
 	})
 }
+
+func TestAddmm(t *testing.T) {
+	inScope(t, func() {
+		a := FromFloat32([]float32{1, 2, 3, 4, 5, 6}, 2, 3)
+		b := FromFloat32([]float32{1, 0, 0, 1, 2, -1}, 3, 2)
+		c := FromFloat32([]float32{10, 20}, 2)
+		wantFloats(t, "addmm([2], [2,3], [3,2])", Addmm(c, a, b), []int{2, 2}, []float32{17, 19, 26, 19}, exact)
+	})
+}
+
+func TestGreaterEqual(t *testing.T) {
+	inScope(t, func() {
+		got := GreaterEqual(vec123(), FromFloat32([]float32{3, 2, 1}, 3))
+		if got.DType() != Bool {
+			t.Errorf("GreaterEqual returned %v, want bool", got.DType())
+		}
+		wantInts(t, "[1,2,3] >= [3,2,1]", got, []int{3}, []int32{0, 1, 1})
+	})
+}

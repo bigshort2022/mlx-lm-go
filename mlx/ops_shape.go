@@ -93,3 +93,29 @@ func PutAlongAxis(a, indices, values *Array, axis int) *Array {
 		return C.mlx_put_along_axis(&res.c, a.c, indices.c, values.c, C.int(axis), s)
 	})
 }
+
+// SliceUpdate returns a copy of a with the elements from start up to but not
+// including stop replaced by update, which broadcasts to that slice. start and
+// stop have one entry per dimension of a.
+func SliceUpdate(a, update *Array, start, stop []int) *Array {
+	from, to := cInts(start), cInts(stop)
+	strides := make([]C.int, len(from))
+	for i := range strides {
+		strides[i] = 1
+	}
+	return apply(func(res *Array, s C.mlx_stream) C.int {
+		return C.mlx_slice_update(&res.c, a.c, update.c,
+			unsafe.SliceData(from), C.size_t(len(from)),
+			unsafe.SliceData(to), C.size_t(len(to)),
+			unsafe.SliceData(strides), C.size_t(len(strides)), s)
+	})
+}
+
+// ScatterAddAxis returns a copy of a with values added at indices along axis.
+// An index that repeats receives every one of its values. values broadcasts
+// against indices.
+func ScatterAddAxis(a, indices, values *Array, axis int) *Array {
+	return apply(func(res *Array, s C.mlx_stream) C.int {
+		return C.mlx_scatter_add_axis(&res.c, a.c, indices.c, values.c, C.int(axis), s)
+	})
+}

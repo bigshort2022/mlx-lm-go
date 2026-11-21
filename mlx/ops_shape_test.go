@@ -106,3 +106,51 @@ func TestPutAlongAxis(t *testing.T) {
 			[]float32{1, -1, -1, 4, 5, -1}, exact)
 	})
 }
+
+func TestSliceUpdate(t *testing.T) {
+	inScope(t, func() {
+		update := FromFloat32([]float32{-1, -2, -3, -4, -5, -6}, 2, 3)
+		got := SliceUpdate(counting(4, 5), update, []int{1, 2}, []int{3, 5})
+		wantFloats(t, "[4,5][1:3, 2:5] = update", got, []int{4, 5}, []float32{
+			0, 1, 2, 3, 4,
+			5, 6, -1, -2, -3,
+			10, 11, -4, -5, -6,
+			15, 16, 17, 18, 19,
+		}, exact)
+		got = SliceUpdate(counting(4, 5), Float(7), []int{1, 2}, []int{3, 5})
+		wantFloats(t, "[4,5][1:3, 2:5] = 7", got, []int{4, 5}, []float32{
+			0, 1, 2, 3, 4,
+			5, 6, 7, 7, 7,
+			10, 11, 7, 7, 7,
+			15, 16, 17, 18, 19,
+		}, exact)
+	})
+}
+
+func TestSliceUpdateLeavesTheSourceAlone(t *testing.T) {
+	inScope(t, func() {
+		src := counting(2, 2)
+		SliceUpdate(src, Float(9), []int{0, 0}, []int{1, 2})
+		wantFloats(t, "source after SliceUpdate", src, []int{2, 2}, []float32{0, 1, 2, 3}, exact)
+	})
+}
+
+func TestSliceUpdatePanicsWithoutOneEntryPerDimension(t *testing.T) {
+	inScope(t, func() {
+		mustPanic(t, func() { SliceUpdate(counting(4, 5), Float(7), []int{1}, []int{3}) })
+		mustPanic(t, func() { SliceUpdate(counting(4, 5), Float(7), []int{1, 2}, []int{3}) })
+	})
+}
+
+func TestScatterAddAxis(t *testing.T) {
+	inScope(t, func() {
+		a := FromFloat32([]float32{1, 2, 3, 4}, 1, 4)
+		indices := FromInt32([]int32{1, 1, 3}, 1, 3)
+		// Python: a.at[:, mx.array([1, 1, 3])].add(mx.array([10., 20, 30]))
+		got := ScatterAddAxis(a, indices, FromFloat32([]float32{10, 20, 30}, 1, 3), 1)
+		wantFloats(t, "scatter_add_axis(values)", got, []int{1, 4}, []float32{1, 32, 3, 34}, exact)
+		// Python: a.at[:, mx.array([1, 1, 3])].subtract(0.5)
+		got = ScatterAddAxis(a, indices, Float(-0.5), -1)
+		wantFloats(t, "scatter_add_axis(scalar)", got, []int{1, 4}, []float32{1, 1, 3, 3.5}, exact)
+	})
+}
