@@ -53,11 +53,15 @@ type Templater interface {
 	Render(messages, tools, kwargs json.RawMessage, addGenerationPrompt bool) (string, error)
 }
 
+// ThinkingTokens identifies the encoded <think> and </think> chat markers.
+type ThinkingTokens struct{ Start, End int32 }
+
 // Deps are the collaborators the server drives. The server uses them for one
 // request at a time, so they need not be safe for concurrent use.
 type Deps struct {
-	Engine    engine.Engine
-	Tokenizer Tokenizer
-	Template  Templater
-	WebUI     fs.FS // nil: no UI is served
+	Engine         engine.Engine
+	Tokenizer      Tokenizer
+	Template       Templater
+	WebUI          fs.FS           // nil: no UI is served
+	ThinkingTokens *ThinkingTokens // nil: chat output is plain text
 }
