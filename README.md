@@ -159,11 +159,8 @@ make test-race
 make vet
 ```
 
-GitHub Actions runs the portable Go tests on a dedicated self-hosted Linux ARM64
-runner labeled `mlx-lm-go-ci`, without MLX or model weights. In this private
-repository, the workflow runs only for same-repository PRs and pushes to `main`.
-Use an isolated runner with no host mounts or credentials; switch back to a
-GitHub-hosted runner before making the repository public.
+GitHub Actions runs the portable Go tests on GitHub-hosted Linux runners
+without MLX or model weights.
 Run the full suite on an Apple-silicon Mac to exercise native inference.
 
 Tests compare against Python recordings under `testdata/`: tokenization, rendered prompts, layer activations, logits, sampled tokens and HTTP exchanges. Use `make fixtures` for the original fixtures and `tools/oracle/make_qwen38_model_fixtures.py` for the pinned Qwen3 fixtures. Run the Qwen3 tests below with both snapshots cached and the same MLX version used to record the goldens:
