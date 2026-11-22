@@ -72,7 +72,7 @@ type Fake struct {
 }
 ```
 
-`Fake.Generate` emits `Tokens` up to `MaxTokens` (finish `"length"` if it ran out of budget before the script ended, else `"stop"`), returns `ctx.Err()` as soon as the context ends, and reports `PromptTokens = len(req.Prompt)`.
+`Fake.Generate` emits `Tokens` up to `MaxTokens` (finish `"length"` if it ran out of budget before the script ended, else `"stop"`), returns `ctx.Err()` as soon as the context ends, and reports `PromptTokens = len(req.Prompt)` and `CompletionTokens` = the number of tokens it emitted. The server copies `usage` from the `Result`; it does not count `emit` calls, because a real engine also counts the end-of-sequence token it does not emit.
 
 ```go
 package server

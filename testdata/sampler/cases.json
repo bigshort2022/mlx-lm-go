@@ -1,0 +1,110 @@
+{
+ "meta": {
+  "mlx_lm": "0.32.2",
+  "mlx": "0.32.4",
+  "vocab": 32
+ },
+ "cases": [
+  {
+   "name": "top_k_1",
+   "kind": "top_k",
+   "top_k": 1
+  },
+  {
+   "name": "top_k_5",
+   "kind": "top_k",
+   "top_k": 5
+  },
+  {
+   "name": "top_k_31",
+   "kind": "top_k",
+   "top_k": 31
+  },
+  {
+   "name": "top_p_0.1",
+   "kind": "top_p",
+   "top_p": 0.1
+  },
+  {
+   "name": "top_p_0.5",
+   "kind": "top_p",
+   "top_p": 0.5
+  },
+  {
+   "name": "top_p_0.9",
+   "kind": "top_p",
+   "top_p": 0.9
+  },
+  {
+   "name": "top_p_0.999",
+   "kind": "top_p",
+   "top_p": 0.999
+  },
+  {
+   "name": "min_p_0.05",
+   "kind": "min_p",
+   "min_p": 0.05
+  },
+  {
+   "name": "min_p_0.3",
+   "kind": "min_p",
+   "min_p": 0.3
+  },
+  {
+   "name": "min_p_0.9",
+   "kind": "min_p",
+   "min_p": 0.9
+  },
+  {
+   "name": "repetition_1.1_20",
+   "kind": "repetition_penalty",
+   "penalty": 1.1,
+   "context_size": 20
+  },
+  {
+   "name": "repetition_1.5_4",
+   "kind": "repetition_penalty",
+   "penalty": 1.5,
+   "context_size": 4
+  },
+  {
+   "name": "repetition_0.8_20",
+   "kind": "repetition_penalty",
+   "penalty": 0.8,
+   "context_size": 20
+  },
+  {
+   "name": "presence_0.5_20",
+   "kind": "presence_penalty",
+   "penalty": 0.5,
+   "context_size": 20
+  },
+  {
+   "name": "presence_1.5_4",
+   "kind": "presence_penalty",
+   "penalty": 1.5,
+   "context_size": 4
+  },
+  {
+   "name": "frequency_0.5_20",
+   "kind": "frequency_penalty",
+   "penalty": 0.5,
+   "context_size": 20
+  },
+  {
+   "name": "frequency_1.5_4",
+   "kind": "frequency_penalty",
+   "penalty": 1.5,
+   "context_size": 4
+  },
+  {
+   "name": "logit_bias",
+   "kind": "logit_bias",
+   "logit_bias": {
+    "0": -100.0,
+    "7": 2.5,
+    "31": 10.0
+   }
+  }
+ ]
+}

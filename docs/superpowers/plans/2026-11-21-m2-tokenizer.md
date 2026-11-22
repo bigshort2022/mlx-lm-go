@@ -50,8 +50,8 @@ func (t *Tokenizer) EOSToken() (token string, id int32, ok bool) // from tokeniz
 func (t *Tokenizer) NewStream() *Stream
 
 type Stream struct{ /* unexported */ }
-// Add consumes one id and returns the text that is now complete. It returns ""
-// while the bytes seen so far end in an incomplete UTF-8 sequence.
+// Add consumes one id and returns all text that is now complete. Only an
+// unfinished trailing character is held back.
 func (s *Stream) Add(id int32) string
 // Flush returns whatever is still held back, with invalid bytes as U+FFFD.
 func (s *Stream) Flush() string

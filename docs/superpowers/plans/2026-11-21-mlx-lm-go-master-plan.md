@@ -6,9 +6,11 @@
 
 **Architecture:** one Go binary links MLX through `mlx-c` with cgo. All MLX calls run on a single OS-thread-locked goroutine; HTTP handlers talk to it over a channel. Tokenizer, chat template, sampler, model code and the OpenAI-compatible HTTP layer are pure Go. The chat UI is a framework-free TypeScript package in the unite4ai repo; the same build is published to unite4ai.com and vendored into the Go binary.
 
-**Tech stack:** Go 1.27, cgo, Homebrew mlx-c 0.8.0 (MLX 0.32.4), `dlclark/regexp2`, `NikolaLohinski/gonja`, `golang.org/x/text`; Bun 1.4, TypeScript, Astro 7 (existing unite4ai toolchain); Python `mlx-lm` only as a test oracle.
+**Tech stack:** Go 1.27, cgo, Homebrew mlx-c 0.8.0 (MLX 0.32.4), `dlclark/regexp2`, `golang.org/x/text`; Bun 1.4, TypeScript, Astro 7 (existing unite4ai toolchain); Python `mlx-lm` only as a test oracle.
 
 **Task-level plans:** `2026-11-21-m0-toolchain.md` (done), `-m1-mlx-bindings.md`, `-m2-tokenizer.md`, `-m2-chat-template.md`, `-m4-http-server.md` in this directory, and `docs/superpowers/plans/2026-11-21-local-chat.md` in the unite4ai repo. Where a task-level plan differs from this document, the task-level plan wins.
+
+**Current implementation:** [M6a: dense Qwen3.8 text inference](2026-11-21-m6a-qwen38.md).
 
 ---
 
@@ -29,7 +31,7 @@ Chosen by the planner; change them here if you disagree:
 | Repo and licence | `github.com/bigshort2022/mlx-lm-go`, MIT | Matches MLX, mlx-c and the unite4ai repo. |
 | Platform for 1.0 | macOS on Apple silicon only | MLX's CUDA backend exists but doubles the test matrix. |
 | First architecture | `qwen2` (`mlx-community/Qwen2.5-1.5B-Instruct-4bit`, 840 MB, already in the local HF cache) | Plain transformer, 221 lines in mlx-lm. Fast to load, so fast to test. |
-| Second architecture | `qwen3_5` (`Qwen3.5-9B-MLX-4bit`, then `Qwen3.8-27B-4bit`) | What mlx-fleet's planner and coder slots run. Hybrid: gated-delta linear attention with full attention every 4th layer. |
+| Second architecture | Dense `qwen3_5`: [Qwen3.8-27B-4bit](https://huggingface.co/mlx-community/Qwen3.8-27B-4bit) flagship and [Qwen3.5-9B-MLX-4bit](https://huggingface.co/mlx-community/Qwen3.5-9B-MLX-4bit) smaller checkpoint | Same hybrid gated-delta/full-attention architecture. Qwen3.8 is the quality target; Qwen3.5-9B is the responsive option and a smaller numerical parity fixture. Neither changes the existing explicit `--model` selection. |
 | Bindings | Hand-written for the roughly 40 mlx-c functions we need | mlx-c exposes 267 ops; a generator is not justified yet. |
 | Array lifetime | Explicit scopes that free every array created inside them unless kept. No finalizers. | Finalizers run late and let GPU memory grow without bound. |
 | Model files | Read a local directory or an existing Hugging Face cache snapshot. No downloader in 1.0; a missing model prints the `hf download` command. | Keeps the network out of the server. |
@@ -156,7 +158,7 @@ Flags of `mlx_lm.server`:
 | Milestone | Flags |
 |---|---|
 | M4 | `--model --host --port --allowed-origins --log-level --chat-template --chat-template-args --temp --top-p --top-k --min-p --max-tokens --prefill-step-size` |
-| M6 | `--prompt-cache-size --prompt-cache-bytes` |
+| M6b | `--prompt-cache-size --prompt-cache-bytes` |
 | Rejected with an explicit error in 1.0 | `--adapter-path --draft-model --num-draft-tokens --trust-remote-code --use-default-chat-template --decode-concurrency --prompt-concurrency --pipeline` |
 
 Request fields:
@@ -164,10 +166,10 @@ Request fields:
 | Milestone | Fields |
 |---|---|
 | M4 | `messages model max_tokens stream temperature top_p top_k min_p stop repetition_penalty repetition_context_size presence_penalty presence_context_size frequency_penalty frequency_context_size logit_bias chat_template_kwargs` |
-| M6 | `logprobs tools` (tool-call parsing), reasoning content split |
+| M6b | `logprobs tools` (tool-call parsing) |
 | HTTP 400 in 1.0 | `adapters draft_model num_draft_tokens role_mapping` |
 
-Performance gate for M6, measured on the same machine and model against Python `mlx_lm.server`: decode tokens per second and time to first token each within 10%. The forward pass uses the same Metal kernels, so a larger gap means a bug in our graph or cache handling.
+M6a separates chat `reasoning` from visible `content` as in mlx-lm 0.32.2. Measure its time to first token, decode throughput and peak MLX memory against Python on both pinned snapshots using identical settings. M6b retains the fleet performance gate (time to first token and decode tokens/s each within 10%), including warm-prefix runs.
 
 ## 6. Security model for a server that browsers can reach
 
@@ -192,9 +194,10 @@ graph LR
   M4 --> M4b
   M5[M5 front end] --> M5b[M5 gate: embedded in binary]
   M4b --> M5b
-  M4b --> M6[M6 qwen3_5, caches, parity]
+  M4b --> M6a[M6a dense Qwen3.8 text]
+  M6a --> M6b[M6b prefix cache and tools]
   M5b --> M7[M7 launch]
-  M6 --> M7
+  M6b --> M7
 ```
 
 M5 starts on day one against the Python `mlx_lm.server` already used by mlx-fleet. M2 and the fake-engine part of M4 do not need MLX and can run beside M1.
@@ -275,18 +278,19 @@ mlx-lm-go files: `scripts/sync-webui.sh`, `internal/webui/{embed.go,VERSION,SHA2
 
 Exit gate: `node scripts/agent/verify.mjs --only hub` passes in the unite4ai repo. A chat streams from the deployed hosted page in Chrome and from the embedded page in all three browsers, both against the Go server.
 
-### M6. `qwen3_5`, caches and parity (large)
+### M6a. Dense Qwen3.8 text inference
 
-Files: `internal/models/qwen3_5/{model,gated_delta,attention,moe}.go`, `internal/cache/{arrays,prompt}.go`, `internal/server/{tools,reasoning,logprobs}.go`, more bindings in `mlx/`.
+Implement [the M6a task plan](2026-11-21-m6a-qwen38.md). Register the native dense `qwen3_5` architecture and run Qwen3.8-27B and Qwen3.5-9B with affine 4-bit weights. Match the Python reference for prompts, recurrent state, attention, next-token generation and structured text chat. Image and video requests remain unsupported. The Unite4AI page uses the existing API and needs no release or redesign.
 
-- [ ] Port `mlx_lm/models/qwen3_5.py` with its `qwen3_next` and `gated_delta` dependencies, text path only. A request containing image content returns HTTP 400.
-- [ ] State cache for gated-delta layers beside the KV cache for full-attention layers.
-- [ ] Prompt-prefix cache honouring `--prompt-cache-size` and `--prompt-cache-bytes`: a follow-up turn prefills only the new tokens.
-- [ ] `logprobs`, tool-call parsing and reasoning split, each checked against recorded Python server responses.
-- [ ] Golden gate as in M3 for `Qwen3.5-9B-MLX-4bit`, with thinking on and off.
-- [ ] Performance gate from section 5 on `Qwen3.5-9B-MLX-4bit` and `Qwen3.8-27B-4bit`, using mlx-fleet's `monitoring.bench_sweep`.
+Exit gate: both pinned checkpoints run through the CLI and HTTP, including uninterrupted and chunked prefill and streaming; report numerical parity and measured performance on the same Mac.
 
-Exit gate: mlx-fleet runs its planner and coder roles on mlx-lm-go slots with the existing `fleet.toml` flags, and `monitoring.eval_runner` pass rates match the Python slots.
+### M6b. Prefix cache, tool calls, logprobs and fleet parity
+
+- [x] Prompt-prefix cache honouring `--prompt-cache-size` and `--prompt-cache-bytes`; reuse both recurrent and KV state for an exact token prefix.
+- [ ] Add `logprobs` and tool-call parsing; check against recorded Python server responses.
+- [ ] Run the fleet performance gate from section 5 using mlx-fleet's `monitoring.bench_sweep`.
+
+Exit gate: once explicitly approved for a fleet cutover, mlx-fleet runs its planner and coder roles on mlx-lm-go slots with the existing `fleet.toml` flags, and `monitoring.eval_runner` pass rates match Python. Sparse `qwen3_5_moe` is not needed for either pinned checkpoint and is not part of this cutover.
 
 ### M7. Open-source launch (small)
 
@@ -314,6 +318,22 @@ Exit gate: a new user on a clean Apple silicon Mac follows the README from insta
 
 Adapters (LoRA), speculative decoding, batching, distributed inference (`mlx.launch`, `--pipeline`), KV-cache quantisation, vision input, embeddings, a model downloader, Linux and CUDA, API keys, conversation persistence in the UI.
 
-## 10. Next step
+## 10. Status on 2026-11-21
 
-Approve this plan or edit section 1. Then the bite-sized plans for M0 and M5 are written first, because M0 unblocks everything and M5 has no dependency on the engine.
+| Milestone | State |
+|---|---|
+| M0 toolchain | done |
+| M1 `mlx` bindings and inference thread | done, reviewed, review fixes in |
+| M2 tokenizer and chat template | done, reviewed, review fixes in. The template engine is an in-package interpreter; gonja was dropped because it rendered wrong prompts where Jinja2 raises. |
+| M3 `qwen2` generation | done, reviewed, review fixes in. Greedy-decoding fixtures match mlx-lm 0.32.2 on MLX 0.32.4. |
+| M4 HTTP server and the binary | done, reviewed. Not yet attached to mlx-fleet as a slot. |
+| M5 front end | page and standalone build done in the unite4ai repository, on a local branch that is not pushed or deployed. The UI is embedded in the binary. Browser checks so far: headless Chromium only, against loopback pages. |
+| M6a dense Qwen3.8 and Qwen3.5 text | done on `feat/qwen38`: both pinned checkpoints pass native CLI, HTTP and Python oracle gates; [results](2026-11-21-m6a-qwen38.md#verified-closeout) |
+| M6b prompt prefix cache, tools, logprobs, fleet gate | not started |
+| M7 launch | not started, except a README |
+
+Changes to this plan made during implementation:
+
+- The reference is mlx-lm 0.32.2 running MLX 0.32.4, not 0.31.3. Numeric goldens must come from the MLX version the binary links.
+- A 403 for a disallowed origin carries no CORS headers, so a page cannot identify the server; the page's "unreachable" guidance names the flag instead.
+- One engine may be open per process. Closing it frees the model.

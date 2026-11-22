@@ -31,11 +31,11 @@
     "headers": [
       [
         "Server",
-        "BaseHTTP/0.6 Python/3.13.13"
+        "BaseHTTP Python/3.15.2"
       ],
       [
         "Date",
-        "Sat, 21 Nov 2026 11:30:17 GMT"
+        "Sat, 21 Nov 2026 12:24:32 GMT"
       ],
       [
         "Content-type",
@@ -55,9 +55,9 @@
       ],
       [
         "Content-Length",
-        "475"
+        "481"
       ]
     ],
-    "body": "{\"id\": \"chatcmpl-a341af6b-4e0c-4aaa-a091-7d626c587e9b\", \"system_fingerprint\": \"0.31.3-0.31.2-macOS-26.4.1-arm64-arm-64bit-Mach-O-applegpu_g16s\", \"object\": \"chat.completion\", \"model\": \"default_model\", \"created\": 1795260617, \"choices\": [{\"index\": 0, \"finish_reason\": \"length\", \"message\": {\"role\": \"assistant\", \"content\": \"Here are numbers from 1 to\"}}], \"usage\": {\"prompt_tokens\": 37, \"completion_tokens\": 8, \"total_tokens\": 45, \"prompt_tokens_details\": {\"cached_tokens\": 36}}}"
+    "body": "{\"id\": \"chatcmpl-98483943-b1d8-460e-a17a-714642a2a7c5\", \"system_fingerprint\": \"0.32.2-0.32.4-macOS-26.4.1-arm64-arm-64bit-Mach-O-applegpu_g16s\", \"object\": \"chat.completion\", \"model\": \"default_model\", \"created\": 1795263872, \"choices\": [{\"index\": 0, \"finish_reason\": \"length\", \"message\": {\"role\": \"assistant\", \"content\": \"Sure, here are the numbers from \"}}], \"usage\": {\"prompt_tokens\": 37, \"completion_tokens\": 8, \"total_tokens\": 45, \"prompt_tokens_details\": {\"cached_tokens\": 36}}}"
   }
 }

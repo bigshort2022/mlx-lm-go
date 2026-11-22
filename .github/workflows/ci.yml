@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portable-go:
+    name: Portable Go tests
+    # Private repo only. Do not execute fork PR code on the dedicated runner.
+    if: >-
+      github.event.repository.private &&
+      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, linux, arm64, mlx-lm-go-ci]
+    timeout-minutes: 10
+    env:
+      CGO_ENABLED: '0'
+      HF_HUB_OFFLINE: '1'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Test packages that do not link MLX
+        run: >-
+          go test -count=1
+          ./internal/chattemplate
+          ./internal/engine
+          ./internal/exec
+          ./internal/hub
+          ./internal/server
+          ./internal/tokenizer
+          ./internal/webui

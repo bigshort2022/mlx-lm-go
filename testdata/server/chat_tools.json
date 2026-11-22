@@ -40,11 +40,11 @@
     "headers": [
       [
         "Server",
-        "BaseHTTP/0.6 Python/3.13.13"
+        "BaseHTTP Python/3.15.2"
       ],
       [
         "Date",
-        "Sat, 21 Nov 2026 11:30:18 GMT"
+        "Sat, 21 Nov 2026 12:24:33 GMT"
       ],
       [
         "Content-type",
@@ -64,9 +64,9 @@
       ],
       [
         "Content-Length",
-        "600"
+        "617"
       ]
     ],
-    "body": "{\"id\": \"chatcmpl-0f683a42-9406-4a31-8eb0-225126a85a3d\", \"system_fingerprint\": \"0.31.3-0.31.2-macOS-26.4.1-arm64-arm-64bit-Mach-O-applegpu_g16s\", \"object\": \"chat.completion\", \"model\": \"default_model\", \"created\": 1795260618, \"choices\": [{\"index\": 0, \"finish_reason\": \"tool_calls\", \"message\": {\"role\": \"assistant\", \"tool_calls\": [{\"function\": {\"name\": \"get_weather\", \"arguments\": \"{\\\"city\\\": \\\"Paris\\\"}\"}, \"type\": \"function\", \"id\": \"b42b419f-2e04-42ef-97d4-b7c01d2b3870\"}]}}], \"usage\": {\"prompt_tokens\": 177, \"completion_tokens\": 20, \"total_tokens\": 197, \"prompt_tokens_details\": {\"cached_tokens\": 18}}}"
+    "body": "{\"id\": \"chatcmpl-690160ba-6d1b-43be-b819-4e994d98952d\", \"system_fingerprint\": \"0.32.2-0.32.4-macOS-26.4.1-arm64-arm-64bit-Mach-O-applegpu_g16s\", \"object\": \"chat.completion\", \"model\": \"default_model\", \"created\": 1795263873, \"choices\": [{\"index\": 0, \"finish_reason\": \"tool_calls\", \"message\": {\"role\": \"assistant\", \"content\": null, \"tool_calls\": [{\"function\": {\"name\": \"get_weather\", \"arguments\": \"{\\\"city\\\": \\\"Paris\\\"}\"}, \"type\": \"function\", \"id\": \"2e579af1-3945-49ee-bd6e-7dc723781963\"}]}}], \"usage\": {\"prompt_tokens\": 177, \"completion_tokens\": 20, \"total_tokens\": 197, \"prompt_tokens_details\": {\"cached_tokens\": 18}}}"
   }
 }
