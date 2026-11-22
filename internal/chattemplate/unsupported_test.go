@@ -19,8 +19,6 @@ func TestParseNamesTheUnsupportedConstruct(t *testing.T) {
 		{"{% for x in l %}{% break %}{% endfor %}", `statement "break" is not supported`},
 		{"{% generation %}x{% endgeneration %}", `statement "generation" is not supported`},
 		{"{% call m() %}x{% endcall %}", `statement "call" is not supported`},
-		{"{% for x in l %}a{% else %}b{% endfor %}", "for ... else is not supported"},
-		{"{% for x in l if x %}a{% endfor %}", "for ... if is not supported"},
 		{"{% for x in l recursive %}a{% endfor %}", "for ... recursive is not supported"},
 		{"{% set x %}a{% endset %}", "block set"},
 		{"{% set a, b = l %}", "set with several targets is not supported"},

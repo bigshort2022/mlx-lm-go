@@ -15,9 +15,10 @@
 //
 // # Supported constructs
 //
-//   - Statements: if, elif, else; for, with unpacking and the loop variable
-//     (index, index0, revindex, revindex0, first, last, length, depth, depth0,
-//     previtem, nextitem); set of a name or of a namespace attribute; macro,
+//   - Statements: if, elif, else; for, with unpacking, optional filtering and
+//     an else branch. Loop metadata (index, index0, revindex, revindex0,
+//     first, last, length, depth, depth0, previtem, nextitem) counts only
+//     accepted items. Set of a name or of a namespace attribute; macro,
 //     with positional, keyword and default arguments. Comments and whitespace
 //     control, with trim_blocks and lstrip_blocks on as Hugging Face sets
 //     them.

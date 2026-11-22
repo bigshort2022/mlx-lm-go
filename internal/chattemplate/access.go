@@ -38,7 +38,11 @@ func getAttr(object any, name string) (any, error) {
 			return value, nil
 		}
 	case *loopState:
-		if value, ok := object.attr(name); ok {
+		if object.filter != nil {
+			if value, ok, err := object.filteredAttr(name); ok || err != nil {
+				return value, err
+			}
+		} else if value, ok := object.attr(name); ok {
 			return value, nil
 		}
 	case string:

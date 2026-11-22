@@ -70,9 +70,11 @@ func (s *ifStmt) exec(out *strings.Builder, sc *scope) error {
 // scope of its own, so a variable set in the body is gone on the next pass
 // and after the loop.
 type forStmt struct {
-	targets  []string
-	iterable expr
-	body     []statement
+	targets   []string
+	iterable  expr
+	predicate expr
+	body      []statement
+	otherwise []statement
 }
 
 func (s *forStmt) exec(out *strings.Builder, sc *scope) error {
@@ -84,19 +86,17 @@ func (s *forStmt) exec(out *strings.Builder, sc *scope) error {
 	if err != nil {
 		return err
 	}
+	if s.predicate != nil {
+		return s.execFiltered(out, sc, items)
+	}
+	if len(items) == 0 {
+		return execAll(s.otherwise, out, sc.child())
+	}
 	loop := &loopState{items: items}
 	for index, item := range items {
 		pass := sc.child()
-		if len(s.targets) == 1 {
-			pass.set(s.targets[0], item)
-		} else {
-			values, err := unpack(item, len(s.targets))
-			if err != nil {
-				return err
-			}
-			for i, target := range s.targets {
-				pass.set(target, values[i])
-			}
+		if err := bindTargets(pass, s.targets, item); err != nil {
+			return err
 		}
 		loop.index0 = index
 		pass.set("loop", loop)
@@ -110,6 +110,7 @@ func (s *forStmt) exec(out *strings.Builder, sc *scope) error {
 // loopState is the "loop" variable of a for body.
 type loopState struct {
 	items  []any
+	filter *filteredItems
 	index0 int
 }
 

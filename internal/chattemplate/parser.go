@@ -141,7 +141,7 @@ func (r *tagReader) expectTarget() (string, error) {
 	return name.text, nil
 }
 
-// parseFor parses {% for a, b in iterable %} ... {% endfor %}.
+// parseFor parses for loops with optional filtering and an else branch.
 func (p *parser) parseFor(tag *tagReader) (statement, error) {
 	stmt := &forStmt{}
 	for {
@@ -161,25 +161,34 @@ func (p *parser) parseFor(tag *tagReader) (statement, error) {
 	if stmt.iterable, err = tag.parseOr(); err != nil {
 		return nil, err
 	}
-	for _, modifier := range []string{"if", "recursive"} {
-		if tag.isName(modifier) {
-			return nil, tag.errorf("for ... %s is not supported", modifier)
+	if tag.acceptName("if") {
+		if stmt.predicate, err = tag.parseOr(); err != nil {
+			return nil, err
 		}
+	}
+	if tag.isName("recursive") {
+		return nil, tag.errorf("for ... recursive is not supported")
 	}
 	if err := tag.expectEnd(); err != nil {
 		return nil, err
 	}
 
 	p.forDepth++
+	defer func() { p.forDepth-- }()
 	body, end, err := p.parseBody("else", "endfor")
-	p.forDepth--
 	if err != nil {
 		return nil, err
 	}
-	if end.keyword() == "else" {
-		return nil, end.errorf("for ... else is not supported")
-	}
 	stmt.body = body
+	if end.keyword() == "else" {
+		if err := end.expectEnd(); err != nil {
+			return nil, err
+		}
+		stmt.otherwise, end, err = p.parseBody("endfor")
+		if err != nil {
+			return nil, err
+		}
+	}
 	return stmt, end.expectEnd()
 }
 
