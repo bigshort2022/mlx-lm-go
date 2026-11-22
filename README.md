@@ -159,6 +159,9 @@ make test-race
 make vet
 ```
 
+GitHub Actions runs the portable Go tests on Linux without MLX or model weights.
+Run the full suite on an Apple-silicon Mac to exercise native inference.
+
 Tests compare against Python recordings under `testdata/`: tokenization, rendered prompts, layer activations, logits, sampled tokens and HTTP exchanges. Use `make fixtures` for the original fixtures and `tools/oracle/make_qwen38_model_fixtures.py` for the pinned Qwen3 fixtures. Run the Qwen3 tests below with both snapshots cached and the same MLX version used to record the goldens:
 
 ```sh
