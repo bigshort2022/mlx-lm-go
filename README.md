@@ -9,6 +9,8 @@ This is early software. What works today:
 - Models of the `qwen2` family in 4-bit or dense form, for example `mlx-community/Qwen2.5-1.5B-Instruct-4bit`.
 - Text inference for the dense `qwen3_5` family. Tested 4-bit checkpoints: [Qwen3.8-27B](https://huggingface.co/mlx-community/Qwen3.8-27B-4bit) (quality) and [Qwen3.5-9B](https://huggingface.co/mlx-community/Qwen3.5-9B-MLX-4bit) (smaller and faster).
 - `POST /v1/chat/completions` and `POST /v1/completions`, streamed or not, with stop strings, sampling controls, penalties and logit bias.
+- Function calling for Qwen3.8 and Qwen3.5, with streamed and buffered replies and tool results in chat history.
+- Opt-in prompt prefix caching for Qwen2.5, Qwen3.5 and Qwen3.8.
 - `GET /v1/models`, `GET /health`, and a chat page at `/`.
 
 Pinned test cases compare Qwen2.5, Qwen3.5 and Qwen3.8 with mlx-lm 0.32.2 on MLX 0.32.4. See the [Qwen3.8 plan](docs/superpowers/plans/2026-11-21-m6a-qwen38.md) for the tested revisions and results.
@@ -16,11 +18,10 @@ Pinned test cases compare Qwen2.5, Qwen3.5 and Qwen3.8 with mlx-lm 0.32.2 on MLX
 Not there yet:
 
 - Sparse `qwen3_5_moe`, other architectures, and image or video input.
-- A prompt cache. Every request processes its whole prompt, so the first token of a follow-up turn arrives later than with Python.
-- Tool calls, `logprobs`, adapters, speculative decoding, batching, distributed inference, and model downloads.
+- `logprobs`, adapters, speculative decoding, batching, distributed inference, and model downloads.
 - Linux and CUDA.
 
-Known unsupported options such as `tools`, `logprobs`, and `--draft-model` return errors when requested. Unrecognized JSON fields are ignored.
+Known unsupported options such as `logprobs` and `--draft-model` return errors when requested. Unrecognized JSON fields are ignored.
 
 ## Install
 
@@ -75,6 +76,56 @@ bin/mlx-lm-go generate --model mlx-community/Qwen2.5-1.5B-Instruct-4bit --prompt
 ```
 
 `bin/mlx-lm-go server --help` lists supported flags and defaults, plus the Python server flags that this binary explicitly rejects.
+
+## Use with OMP
+
+The server converts Qwen's tool syntax to OpenAI `tool_calls`. It does not run functions or commands. OMP executes the tools enabled for its session and sends their results back to the model.
+
+Start a local server for Qwen3.8:
+
+```sh
+bin/mlx-lm-go server --host 127.0.0.1 --port 8082 \
+  --model mlx-community/Qwen3.8-27B-4bit --max-tokens 4096 \
+  --prompt-cache-size 4 --prompt-cache-bytes 2GB \
+  --chat-template-args '{"enable_thinking":false}'
+```
+
+The prompt cache keeps up to four recent exact token-prefix snapshots in memory, with a 2 GB budget for retained tensors and token IDs in this example. Model weights, active inference, and allocator overhead are separate. The cache reuses attention and recurrent state across requests, including tool-result turns, but never reuses sampled output. Cold or changed prefixes still need prefill. Usage reports reused tokens in `prompt_tokens_details.cached_tokens`. Leave `--prompt-cache-size` at its default of `0` to disable caching. Only enable it for trusted clients: cache hits and timing are visible to clients sharing the server.
+
+Save this to `~/.omp/profiles/mlx-go-code/agent/models.yml`:
+
+```yaml
+providers:
+  mlx-go:
+    baseUrl: http://127.0.0.1:8082/v1
+    api: openai-completions
+    auth: none
+    models:
+      - id: mlx-community/Qwen3.8-27B-4bit
+        input: [text]
+        reasoning: false
+        supportsTools: true
+        tokenizer: qwen3
+        contextWindow: 32768
+        maxTokens: 4096
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+        compat:
+          supportsStore: false
+          supportsDeveloperRole: false
+          supportsReasoningEffort: false
+          maxTokensField: max_tokens
+```
+
+From the project you want to work on:
+
+```sh
+omp --profile mlx-go-code --model mlx-go/mlx-community/Qwen3.8-27B-4bit \
+  --offline --tools read,edit,write,grep,glob,bash --approval-mode always-ask
+```
+
+This approval mode lets the model read files but asks before writes or shell commands.
+
+The chat API accepts `tool_choice: "auto"` (default) or `"none"`. It does not support required or named tool choice. With `parallel_tool_calls: false`, a response containing more than one call is rejected. Tools are not supported in the bundled chat page, on the text completions endpoint, or with Qwen2.5.
 
 ## Calls from web pages
 

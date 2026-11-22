@@ -22,6 +22,7 @@ func TestParseFlagsDefaults(t *testing.T) {
 		TopP:             1.0,
 		MaxTokens:        512,
 		PrefillStepSize:  2048,
+		PromptCacheBytes: 1_000_000_000,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ParseFlags defaults =\n%+v, want\n%+v", got, want)
@@ -49,6 +50,8 @@ func TestParseFlagsSetsEachField(t *testing.T) {
 		{[]string{"--min-p", "0.05"}, func(c Config) any { return c.MinP }, float32(0.05)},
 		{[]string{"--max-tokens", "64"}, func(c Config) any { return c.MaxTokens }, 64},
 		{[]string{"--prefill-step-size", "512"}, func(c Config) any { return c.PrefillStepSize }, 512},
+		{[]string{"--prompt-cache-size", "3"}, func(c Config) any { return c.PromptCacheSize }, 3},
+		{[]string{"--prompt-cache-bytes", "1.5GB"}, func(c Config) any { return c.PromptCacheBytes }, uint64(1_500_000_000)},
 		{[]string{"--port=9002"}, func(c Config) any { return c.Port }, 9002},
 	}
 	for _, tc := range cases {
@@ -74,8 +77,6 @@ func TestParseFlagsRejectsUnsupportedFlags(t *testing.T) {
 		{"--decode-concurrency", "32"},
 		{"--prompt-concurrency", "8"},
 		{"--pipeline"},
-		{"--prompt-cache-size", "10"},
-		{"--prompt-cache-bytes", "1GB"},
 	}
 	for _, args := range cases {
 		t.Run(args[0], func(t *testing.T) {
@@ -106,6 +107,8 @@ func TestParseFlagsErrors(t *testing.T) {
 		{"template args null", []string{"--model", "m", "--chat-template-args", "null"}, "--chat-template-args"},
 		{"unknown log level", []string{"--model", "m", "--log-level", "LOUD"}, "--log-level"},
 		{"port not a number", []string{"--model", "m", "--port", "http"}, "port"},
+		{"negative cache size", []string{"--model", "m", "--prompt-cache-size", "-1"}, "non-negative"},
+		{"invalid byte unit", []string{"--model", "m", "--prompt-cache-bytes", "8TB"}, "MB or GB"},
 		{"stray argument", []string{"--model", "m", "serve"}, "serve"},
 	}
 	for _, tc := range cases {
@@ -158,6 +161,8 @@ func TestUsageListsEverySupportedFlagWithItsDefault(t *testing.T) {
 		"--model":              "",
 		"--port":               "8080",
 		"--prefill-step-size":  "2048",
+		"--prompt-cache-bytes": "1000000000",
+		"--prompt-cache-size":  "0",
 		"--temp":               "0",
 		"--top-k":              "0",
 		"--top-p":              "1",
@@ -195,7 +200,7 @@ func TestUsageListsTheUnsupportedFlagsApart(t *testing.T) {
 
 	want := []string{
 		"--adapter-path", "--decode-concurrency", "--draft-model", "--num-draft-tokens", "--pipeline",
-		"--prompt-cache-bytes", "--prompt-cache-size", "--prompt-concurrency", "--trust-remote-code",
+		"--prompt-concurrency", "--trust-remote-code",
 		"--use-default-chat-template",
 	}
 	var got []string

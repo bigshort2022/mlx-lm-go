@@ -34,7 +34,7 @@ func TestChatStreamMatchesRecording(t *testing.T) {
 	if fr := chunks[final].finish(t); fr != "stop" {
 		t.Errorf("final finish_reason = %q, want stop", fr)
 	}
-	if d := *chunks[final].Choices[0].Delta; d != (chatMessage{Role: "assistant"}) {
+	if d := *chunks[final].Choices[0].Delta; d.Role != "assistant" || d.Content != "" || d.Reasoning != "" || len(d.ToolCalls) != 0 {
 		t.Errorf("final delta = %+v, want only the assistant role", d)
 	}
 }

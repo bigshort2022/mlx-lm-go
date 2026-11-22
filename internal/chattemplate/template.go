@@ -10,6 +10,7 @@ import (
 type Template struct {
 	body          []statement
 	specialTokens map[string]string
+	qwenXMLTools  bool
 }
 
 // Input is one chat completion request, as far as the template is concerned.
@@ -31,8 +32,16 @@ func Parse(source string, specialTokens map[string]string) (*Template, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Template{body: body, specialTokens: maps.Clone(specialTokens)}, nil
+	return &Template{
+		body: body, specialTokens: maps.Clone(specialTokens),
+		qwenXMLTools: strings.Contains(source, "<tool_call>") &&
+			strings.Contains(source, "<function=") && strings.Contains(source, "<parameter="),
+	}, nil
 }
+
+// UsesQwenXMLTools reports whether the loaded template instructs the model
+// to use Qwen's function/parameter tags rather than JSON tool-call bodies.
+func (t *Template) UsesQwenXMLTools() bool { return t.qwenXMLTools }
 
 // Render renders the template for one request.
 func (t *Template) Render(in Input) (string, error) {

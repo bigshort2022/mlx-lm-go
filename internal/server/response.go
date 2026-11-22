@@ -36,17 +36,19 @@ type choice struct {
 
 // chatMessage is a streamed assistant delta; absent content is omitted.
 type chatMessage struct {
-	Role      string `json:"role"`
-	Content   string `json:"content,omitempty"`
-	Reasoning string `json:"reasoning,omitempty"`
+	Role      string     `json:"role"`
+	Content   string     `json:"content,omitempty"`
+	Reasoning string     `json:"reasoning,omitempty"`
+	ToolCalls []toolCall `json:"tool_calls,omitempty"`
 }
 
-// A buffered reply may also carry explicit null content (a reasoning-only
-// reply), while an empty legacy reply continues to omit content.
+// A buffered tool-call or reasoning-only reply may carry explicit null content.
+// An empty legacy reply continues to omit it.
 type bufferedMessage struct {
-	Role      string `json:"role"`
-	Content   any    `json:"content,omitempty"` // *string, typed nil (null), or nil (omitted)
-	Reasoning string `json:"reasoning,omitempty"`
+	Role      string     `json:"role"`
+	Content   any        `json:"content,omitempty"` // *string, typed nil (null), or nil (omitted)
+	Reasoning string     `json:"reasoning,omitempty"`
+	ToolCalls []toolCall `json:"tool_calls,omitempty"`
 }
 
 // usage is the token accounting of a completion.
@@ -102,13 +104,13 @@ func (p reply) body(object string, choices ...choice) completionResponse {
 }
 
 // full is the body of a completion that is not streamed.
-func (p reply) full(text, reasoning string, res engine.Result) completionResponse {
+func (p reply) full(text, reasoning string, res engine.Result, calls []toolCall) completionResponse {
 	object, c := "text_completion", choice{FinishReason: &res.FinishReason, Text: &text}
 	if p.chat {
-		message := &bufferedMessage{Role: "assistant", Reasoning: reasoning}
+		message := &bufferedMessage{Role: "assistant", Reasoning: reasoning, ToolCalls: calls}
 		if text != "" {
 			message.Content = &text
-		} else if reasoning != "" {
+		} else if reasoning != "" || len(calls) != 0 {
 			message.Content = (*string)(nil)
 		}
 		object, c = "chat.completion", choice{FinishReason: &res.FinishReason, Message: message}
@@ -129,6 +131,10 @@ func (p reply) chunk(text, reasoning, finish string) completionResponse {
 		c.FinishReason = &finish
 	}
 	return p.body(object, c)
+}
+
+func (p reply) toolChunk(calls []toolCall) completionResponse {
+	return p.body("chat.completion.chunk", choice{Delta: &chatMessage{Role: "assistant", ToolCalls: calls}})
 }
 
 // usageChunk is the optional event that reports token counts at the end of a

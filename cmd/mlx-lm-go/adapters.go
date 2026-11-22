@@ -90,6 +90,8 @@ type serverTemplate struct{ template *chattemplate.Template }
 
 var _ server.Templater = serverTemplate{}
 
+func (t serverTemplate) UsesQwenXMLTools() bool { return t.template.UsesQwenXMLTools() }
+
 func (t serverTemplate) Render(messages, tools, kwargs json.RawMessage, addGenerationPrompt bool) (string, error) {
 	return t.template.Render(chattemplate.Input{
 		Messages:            messages,

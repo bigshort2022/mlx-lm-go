@@ -13,6 +13,7 @@ import (
 
 	"github.com/bigshort2022/mlx-lm-go/internal/chattemplate"
 	"github.com/bigshort2022/mlx-lm-go/internal/engine"
+	"github.com/bigshort2022/mlx-lm-go/internal/generate"
 )
 
 // generateFlags are the settings of the generate command.
@@ -128,7 +129,7 @@ func generateText(ctx context.Context, f generateFlags, stdout, stderr io.Writer
 	if err != nil {
 		return err
 	}
-	eng, err := m.loadEngine(0)
+	eng, err := m.loadEngine(generate.Options{})
 	if err != nil {
 		return err
 	}

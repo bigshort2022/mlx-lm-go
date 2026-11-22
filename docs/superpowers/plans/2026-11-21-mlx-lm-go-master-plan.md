@@ -286,7 +286,7 @@ Exit gate: both pinned checkpoints run through the CLI and HTTP, including unint
 
 ### M6b. Prefix cache, tool calls, logprobs and fleet parity
 
-- [ ] Prompt-prefix cache honouring `--prompt-cache-size` and `--prompt-cache-bytes`; copy/reuse both recurrent state and KV state correctly.
+- [x] Prompt-prefix cache honouring `--prompt-cache-size` and `--prompt-cache-bytes`; reuse both recurrent and KV state for an exact token prefix.
 - [ ] Add `logprobs` and tool-call parsing; check against recorded Python server responses.
 - [ ] Run the fleet performance gate from section 5 using mlx-fleet's `monitoring.bench_sweep`.
 

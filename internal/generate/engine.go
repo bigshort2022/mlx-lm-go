@@ -29,8 +29,10 @@ const clearCacheEvery = 256
 
 // Options configures an Engine.
 type Options struct {
-	PrefillStepSize int     // 0 means 2048
-	EOSTokenIDs     []int32 // used only when config.json has none
+	PrefillStepSize  int     // 0 means 2048
+	EOSTokenIDs      []int32 // used only when config.json has none
+	PromptCacheSize  int     // 0 disables prefix snapshots
+	PromptCacheBytes uint64  // maximum bytes of retained state; 0 disables snapshots
 }
 
 // Engine implements engine.Engine. It owns one inference thread.
@@ -40,6 +42,7 @@ type Engine struct {
 	vocab           int // token ids run from 0 up to but not including it; 0 if the model does not tell
 	eos             []int32
 	prefillStepSize int
+	promptCache     *promptCache // owned by thread
 
 	loaded    bool        // made by Load: it holds engineOpen until Close
 	closing   atomic.Bool // set by Close: no generation starts any more
@@ -76,6 +79,9 @@ func Load(dir string, opts Options) (*Engine, error) {
 		if v, ok := model.(vocabulary); ok {
 			e.vocab = v.VocabSize()
 		}
+		if cloner, ok := model.(stateCloner); ok && opts.PromptCacheSize > 0 && opts.PromptCacheBytes > 0 {
+			e.promptCache = &promptCache{clone: cloner, maxSize: opts.PromptCacheSize, maxBytes: opts.PromptCacheBytes}
+		}
 		e.eos = endOfSequence(cfg, opts)
 		return nil
 	})
@@ -110,6 +116,9 @@ func (e *Engine) Close() {
 		// and that must happen on the thread that owns them. An error means
 		// the thread is gone, and with it the chance to free.
 		_ = e.thread.Do(context.Background(), func() error {
+			if e.promptCache != nil {
+				e.promptCache.clear()
+			}
 			if model, ok := e.model.(releasable); ok {
 				model.Free()
 			}
@@ -168,27 +177,56 @@ func (e *Engine) generate(ctx context.Context, req engine.Request, emit func(tok
 	if err != nil {
 		return err
 	}
-	run := &run{model: e.model, state: e.model.NewState(), sampler: sampler}
+	run := &run{model: e.model, sampler: sampler}
 	defer run.free()
 
-	// Feed all but the last prompt token in steps, to bound the memory of
-	// one forward pass.
-	prompt := req.Prompt
-	for len(prompt) > 1 {
+	// Cache only evaluated prompt state, never a sampled token or its RNG.
+	prompt, target := req.Prompt, 0
+	if c := e.promptCache; c != nil {
+		run.state, err = c.restore(prompt[:len(prompt)-1])
+		if err != nil {
+			return err
+		}
+		if run.state != nil {
+			res.CachedTokens = run.state.Offset()
+			if sampler.UsesTokens() {
+				run.tokens = mlx.FromInt32(prompt[:res.CachedTokens], res.CachedTokens)
+			}
+		}
+		target = checkpoint(len(prompt))
+	}
+	if run.state == nil {
+		run.state = e.model.NewState()
+	}
+
+	// Feed all but the last prompt token in bounded steps. Split at the
+	// checkpoint only when it is not already covered by the restored state.
+	for offset := res.CachedTokens; offset < len(prompt)-1; {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		n := min(e.prefillStepSize, len(prompt)-1)
-		if err := run.prefill(prompt[:n]); err != nil {
+		n := min(e.prefillStepSize, len(prompt)-1-offset)
+		if offset < target {
+			n = min(n, target-offset)
+		}
+		if err := run.prefill(prompt[offset : offset+n]); err != nil {
 			return err
 		}
-		prompt = prompt[n:]
+		offset += n
+		if offset == target {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := e.promptCache.store(prompt[:offset], run.state); err != nil {
+				return err
+			}
+		}
 		mlx.ClearCache()
 	}
 
 	// Like the reference, compute one token ahead: the next step is in flight
 	// on the GPU while the current token is read and handed to emit.
-	if run.y, err = run.first(prompt); err != nil {
+	if run.y, err = run.first(prompt[len(prompt)-1:]); err != nil {
 		return err
 	}
 	for n := 0; ; n++ {
@@ -246,7 +284,9 @@ type run struct {
 
 // free releases what the run holds, however the generation ended.
 func (r *run) free() {
-	r.state.Free()
+	if r.state != nil {
+		r.state.Free()
+	}
 	for _, a := range []*mlx.Array{r.tokens, r.y, r.next} {
 		if a != nil {
 			a.Free()

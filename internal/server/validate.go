@@ -332,7 +332,6 @@ func (s *server) job(r *reader) job {
 	r.unsupported("draft_model", r.given("draft_model"))
 	r.unsupported("num_draft_tokens", draftTokens != 0)
 	r.unsupported("role_mapping", r.given("role_mapping"))
-	r.unsupported("tools", r.given("tools"))
 	r.unsupported("logprobs", logprobs)
 	r.unsupported("top_logprobs", topLogprobs > 0)
 	r.unsupported("xtc_probability", xtcProbability > 0)

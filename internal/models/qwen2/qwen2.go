@@ -102,6 +102,18 @@ func (m *Model) NewState() models.State {
 	return cache.NewLayers(len(m.layers))
 }
 
+// CloneState snapshots the attention cache for an exact prompt prefix.
+func (m *Model) CloneState(state models.State) models.State {
+	src := state.(cache.Layers)
+	buf := make([]cache.KVCache, len(src))
+	dst := make(cache.Layers, len(src))
+	for i, c := range src {
+		buf[i] = c.Clone()
+		dst[i] = &buf[i]
+	}
+	return dst
+}
+
 // Forward implements models.Model. state is nil or comes from NewState.
 func (m *Model) Forward(tokens *mlx.Array, state models.State) *mlx.Array {
 	caches := make(cache.Layers, len(m.layers)) // nil caches: no state

@@ -71,6 +71,14 @@ func (s *State) Free() {
 	*s = State{}
 }
 
+// Clone keeps independent handles to the convolution and recurrent buffers.
+func (s *State) Clone() State {
+	if s.recurrent == nil {
+		return State{}
+	}
+	return State{tail: s.tail.Share(), recurrent: s.recurrent.Share()}
+}
+
 // Forward evaluates [batch, length, hidden size] unpadded activations. With
 // nil state it starts from zero and does not retain the final buffers.
 func (l *Layer) Forward(x *mlx.Array, state *State) *mlx.Array {

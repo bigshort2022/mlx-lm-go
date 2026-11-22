@@ -285,6 +285,24 @@ func ordered[T int | float64 | string](op string, a, b T) bool {
 	return a >= b
 }
 
+// unhashableType reports the first unhashable type in value, in Python's
+// left-to-right order (recursing into tuples).
+func unhashableType(value any) (string, bool) {
+	switch value := value.(type) {
+	case []any:
+		return "list", true
+	case *dict:
+		return "dict", true
+	case tuple:
+		for _, element := range value {
+			if name, ok := unhashableType(element); ok {
+				return name, true
+			}
+		}
+	}
+	return "", false
+}
+
 // contains is "item in container".
 func contains(container, item any) (bool, error) {
 	switch container := container.(type) {
@@ -309,6 +327,13 @@ func contains(container, item any) (bool, error) {
 		case safeString:
 			_, found := container.values[string(item)]
 			return found, nil
+		case tuple:
+			for _, element := range item {
+				if unhashable, ok := unhashableType(element); ok {
+					return false, pyError("TypeError", "unhashable type: '%s'", unhashable)
+				}
+			}
+			return false, nil // hashable, but every key is a string
 		case []any, *dict:
 			return false, pyError("TypeError", "unhashable type: '%s'", typeName(item))
 		}

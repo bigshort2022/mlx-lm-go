@@ -40,6 +40,15 @@ func apply(op func(res *Array, s C.mlx_stream) C.int) *Array {
 	return own(res)
 }
 
+// Share returns a separately owned handle to the same immutable array.
+// It does not copy or evaluate the array.
+func (a *Array) Share() *Array {
+	src := a.live()
+	ref := &Array{}
+	check(C.mlx_array_set(&ref.c, src))
+	return own(ref)
+}
+
 // Free releases the array. It is safe to call twice.
 func (a *Array) Free() {
 	if a.c.ctx == nil {

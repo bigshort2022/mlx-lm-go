@@ -25,6 +25,8 @@ type Config struct {
 	MinP             float32         // default 0.0
 	MaxTokens        int             // default 512
 	PrefillStepSize  int             // default 2048
+	PromptCacheSize  int             // default 0: disabled
+	PromptCacheBytes uint64          // default 1 GB: maximum retained cache size
 }
 
 // Tokenizer turns text into token ids and creates detokenizers. The server

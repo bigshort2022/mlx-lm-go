@@ -48,6 +48,11 @@ func (a *Array) Size() int {
 	return int(C.mlx_array_size(a.live()))
 }
 
+// NBytes returns the logical size of the array's elements in bytes.
+func (a *Array) NBytes() uint64 {
+	return uint64(C.mlx_array_nbytes(a.live()))
+}
+
 // DType returns the element type.
 func (a *Array) DType() DType {
 	return DType(C.mlx_array_dtype(a.live()))

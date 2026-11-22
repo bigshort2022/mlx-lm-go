@@ -181,6 +181,17 @@ func (m *Model) NewState() models.State {
 	return &State{layers: make([]layerState, len(m.layers))}
 }
 
+// CloneState snapshots both attention and DeltaNet state at an exact offset.
+func (m *Model) CloneState(state models.State) models.State {
+	src := state.(*State)
+	dst := &State{layers: make([]layerState, len(src.layers)), offset: src.offset}
+	for i := range src.layers {
+		layer := &src.layers[i]
+		dst.layers[i] = layerState{delta: layer.delta.Clone(), kv: layer.kv.Clone()}
+	}
+	return dst
+}
+
 // Offset returns the number of tokens fed since the state was created or reset.
 func (s *State) Offset() int { return s.offset }
 

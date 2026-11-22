@@ -11,6 +11,7 @@ func (s *server) handleCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	fields := &reader{body: body}
 	j := s.job(fields)
+	fields.unsupported("tools", fields.given("tools"))
 	if _, ok := fields.raw("prompt"); !ok {
 		fields.fail("Request did not contain a prompt")
 	}

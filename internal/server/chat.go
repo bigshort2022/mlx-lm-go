@@ -14,14 +14,18 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	fields := &reader{body: body}
 	j := s.job(fields)
 	j.chat = true
-	messages := chatMessages(fields)
+	xml, supported := s.deps.Template.(interface{ UsesQwenXMLTools() bool })
+	xmlTools := supported && xml.UsesQwenXMLTools()
+	tools, set := fields.chatTools(xmlTools)
+	j.tools = set
+	messages := chatMessages(fields, xmlTools)
 	kwargs := s.templateArgs(fields)
 	if fields.err != nil {
 		writeError(w, http.StatusBadRequest, fields.err.Error())
 		return
 	}
 	j.prompt = func() ([]int32, error) {
-		text, err := s.deps.Template.Render(messages, json.RawMessage("null"), kwargs, true)
+		text, err := s.deps.Template.Render(messages, tools, kwargs, true)
 		if err != nil {
 			return nil, err
 		}
@@ -56,13 +60,13 @@ func mergeObjects(objects ...json.RawMessage) (json.RawMessage, error) {
 }
 
 // chatMessages returns the request's messages, normalised for the template.
-func chatMessages(fields *reader) json.RawMessage {
+func chatMessages(fields *reader, xmlTools bool) json.RawMessage {
 	raw, ok := fields.raw("messages")
 	if !ok {
 		fields.fail("Request did not contain messages")
 		return nil
 	}
-	messages, err := normaliseMessages(raw)
+	messages, err := normaliseMessages(raw, xmlTools)
 	if err != nil {
 		fields.fail("%v", err)
 	}

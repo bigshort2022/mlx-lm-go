@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -11,10 +12,9 @@ import (
 // templates expect, as the reference does: content given as a list of text
 // parts becomes one string, and missing or null content becomes "".
 //
-// Templates serialise parts of a message, such as the arguments of a tool
-// call, straight into the prompt. Everything but the rewritten content
-// therefore keeps its original bytes: key order, spacing and all.
-func normaliseMessages(raw json.RawMessage) (json.RawMessage, error) {
+// Qwen XML templates also need prior assistant arguments as objects, not
+// OpenAI's JSON strings. Unchanged values retain their original bytes.
+func normaliseMessages(raw json.RawMessage, xmlTools bool) (json.RawMessage, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	if open, _ := dec.Token(); open != json.Delim('[') {
 		return nil, errors.New("messages must be of type list")
@@ -27,16 +27,16 @@ func normaliseMessages(raw json.RawMessage) (json.RawMessage, error) {
 			return nil, err
 		}
 		start := int(dec.InputOffset()) - len(message)
-		edit, err := contentEdit(message)
+		var changes [2]edit
+		edits, err := messageEdits(message, xmlTools, changes[:0])
 		if err != nil {
 			return nil, err
 		}
-		if edit.text == nil {
-			continue
+		for _, change := range edits {
+			out.Write(raw[copied : start+change.start])
+			out.Write(change.text)
+			copied = start + change.end
 		}
-		out.Write(raw[copied : start+edit.start])
-		out.Write(edit.text)
-		copied = start + edit.end
 	}
 	if copied == 0 {
 		return raw, nil
@@ -52,40 +52,101 @@ type edit struct {
 	text       []byte
 }
 
-// contentEdit returns the change that normalises the content of one message.
-func contentEdit(message json.RawMessage) (edit, error) {
+// messageEdits returns the normalizations of one message, sorted by offset.
+func messageEdits(message json.RawMessage, xmlTools bool, edits []edit) ([]edit, error) {
 	if message[0] != '{' {
-		return edit{}, errors.New("messages must be a list of dicts")
+		return nil, errors.New("messages must be a list of dicts")
 	}
 	dec := json.NewDecoder(bytes.NewReader(message))
 	if _, err := dec.Token(); err != nil { // the opening brace
-		return edit{}, err
+		return nil, err
 	}
-	var content json.RawMessage
-	contentEnd, keys := 0, 0
+	var content, calls json.RawMessage
+	contentEnd, callsEnd, keys := 0, 0, 0
 	for ; dec.More(); keys++ {
 		key, err := dec.Token()
 		if err != nil {
-			return edit{}, err
+			return nil, err
 		}
 		var value json.RawMessage
 		if err := dec.Decode(&value); err != nil {
-			return edit{}, err
+			return nil, err
 		}
-		if key == "content" { // a repeated key counts once, the last time, as in Python
+		switch key {
+		case "content": // a repeated key counts once, the last time, as in Python
 			content, contentEnd = value, int(dec.InputOffset())
+		case "tool_calls":
+			if xmlTools {
+				calls, callsEnd = value, int(dec.InputOffset())
+			}
+		}
+	}
+	if len(calls) > 0 && string(calls) != "null" {
+		flat, err := normaliseCallArguments(calls)
+		if err != nil {
+			return nil, err
+		}
+		if flat != nil {
+			edits = append(edits, edit{start: callsEnd - len(calls), end: callsEnd, text: flat})
 		}
 	}
 	if content == nil {
-		// Like the reference, add the missing content as the last key.
 		text, closingBrace := `"content":""`, len(message)-1
 		if keys > 0 {
 			text = "," + text
 		}
-		return edit{start: closingBrace, end: closingBrace, text: []byte(text)}, nil
+		return append(edits, edit{start: closingBrace, end: closingBrace, text: []byte(text)}), nil
 	}
 	flat, err := flattenContent(content)
-	return edit{start: contentEnd - len(content), end: contentEnd, text: flat}, err
+	if err != nil {
+		return nil, err
+	}
+	if flat != nil {
+		edits = append(edits, edit{start: contentEnd - len(content), end: contentEnd, text: flat})
+		if len(edits) == 2 && edits[0].start > edits[1].start {
+			edits[0], edits[1] = edits[1], edits[0]
+		}
+	}
+	return edits, nil
+}
+
+func normaliseCallArguments(raw json.RawMessage) (json.RawMessage, error) {
+	var calls []object
+	if err := json.Unmarshal(raw, &calls); err != nil {
+		return nil, fmt.Errorf("tool_calls must be an array of objects")
+	}
+	changed := false
+	for _, call := range calls {
+		function := call
+		if wrapped, ok := call["function"]; ok {
+			if err := json.Unmarshal(wrapped, &function); err != nil {
+				return nil, fmt.Errorf("tool call function must be an object")
+			}
+		}
+		args := function["arguments"]
+		if len(args) == 0 || args[0] != '"' {
+			continue
+		}
+		var text string
+		_ = json.Unmarshal(args, &text)
+		text = strings.TrimSpace(text)
+		if text == "" || text[0] != '{' || !json.Valid([]byte(text)) {
+			return nil, fmt.Errorf("tool call arguments must encode a JSON object")
+		}
+		function["arguments"] = json.RawMessage(text)
+		if _, ok := call["function"]; ok {
+			encoded, err := json.Marshal(function)
+			if err != nil {
+				return nil, err
+			}
+			call["function"] = encoded
+		}
+		changed = true
+	}
+	if !changed {
+		return nil, nil
+	}
+	return json.Marshal(calls)
 }
 
 // errContentType is the reference's message for content that is not text.

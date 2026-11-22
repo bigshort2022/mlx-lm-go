@@ -22,6 +22,7 @@ func (t ThinkingTokens) startsInReasoning(prompt []int32) bool {
 type thinkingSplitter struct {
 	reasoning bool
 	pending   int
+	literal   *bool // once a tool call begins, its arguments may contain thinking tags
 }
 
 func (s *thinkingSplitter) marker() string {
@@ -32,6 +33,9 @@ func (s *thinkingSplitter) marker() string {
 }
 
 func (s *thinkingSplitter) add(piece string, emit func(string, bool) error) error {
+	if s.literal != nil && *s.literal {
+		return emit(piece, false)
+	}
 	if s.pending != 0 {
 		marker := s.marker()
 		n := 0
@@ -72,6 +76,12 @@ func (s *thinkingSplitter) add(piece string, emit func(string, bool) error) erro
 		}
 		if !found {
 			break
+		}
+		if s.literal != nil && *s.literal {
+			if err := emit(marker, false); err != nil {
+				return err
+			}
+			return emit(after, false)
 		}
 		s.reasoning = !s.reasoning
 		piece = after

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bigshort2022/mlx-lm-go/internal/generate"
 	"github.com/bigshort2022/mlx-lm-go/internal/server"
 	"github.com/bigshort2022/mlx-lm-go/internal/webui"
 )
@@ -61,7 +62,11 @@ func serve(ctx context.Context, cfg server.Config, stderr io.Writer, headerTimeo
 	addr := listener.Addr().(*net.TCPAddr)
 	cfg.Port = addr.Port
 
-	eng, err := m.loadEngine(cfg.PrefillStepSize)
+	eng, err := m.loadEngine(generate.Options{
+		PrefillStepSize:  cfg.PrefillStepSize,
+		PromptCacheSize:  cfg.PromptCacheSize,
+		PromptCacheBytes: cfg.PromptCacheBytes,
+	})
 	if err != nil {
 		return err
 	}

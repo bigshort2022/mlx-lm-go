@@ -18,6 +18,7 @@ type job struct {
 	stop      []string // strings that end the completion when generated
 	maxTokens int
 	sampling  engine.Sampling
+	tools     *toolSet
 	// prompt builds the prompt tokens. Its error is reported to the client as
 	// a bad request.
 	prompt func() ([]int32, error)
@@ -38,6 +39,7 @@ func (s *server) run(w http.ResponseWriter, r *http.Request, j job) {
 // take it delays nobody else.
 func (s *server) runBuffered(w http.ResponseWriter, r *http.Request, j job, out reply) {
 	var text, reasoning strings.Builder
+	var calls []toolCall
 	res, err := s.generate(r.Context(), j, func() {}, func(piece string, thinking bool) error {
 		if thinking {
 			reasoning.WriteString(piece)
@@ -45,12 +47,12 @@ func (s *server) runBuffered(w http.ResponseWriter, r *http.Request, j job, out 
 			text.WriteString(piece)
 		}
 		return nil
-	})
+	}, func(parsed []toolCall) error { calls = parsed; return nil })
 	if err != nil {
 		writeFailure(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, out.full(text.String(), reasoning.String(), res))
+	writeJSON(w, http.StatusOK, out.full(text.String(), reasoning.String(), res, calls))
 }
 
 // runStreamed answers with one event per piece of text as it is generated,
@@ -66,6 +68,12 @@ func (s *server) runStreamed(w http.ResponseWriter, r *http.Request, j job, out 
 				return events.send(out.chunk("", piece, ""))
 			}
 			return events.send(out.chunk(piece, "", ""))
+		},
+		func(calls []toolCall) error {
+			for i := range calls {
+				calls[i].Index = &i
+			}
+			return events.send(out.toolChunk(calls))
 		},
 	)
 	if events == nil {
@@ -108,12 +116,12 @@ func writeFailure(w http.ResponseWriter, err error) {
 // and the turn ends when generate returns.
 //
 // begin is called once the prompt is ready and generation is about to start.
-// The generated text is then handed to onText in order, as soon as it is
-// known not to be part of a stop string or an enabled thinking marker.
-// If onText fails, generation is cancelled and generate returns that error.
+// Generated text and reasoning are streamed via onText; onTools receives a
+// completed, validated tool turn, never a partial call. A sink error cancels
+// generation and is returned to the caller.
 // A user stop also cancels generation and sets the finish reason to "stop";
 // the token counts are still the engine's.
-func (s *server) generate(ctx context.Context, j job, begin func(), onText func(piece string, thinking bool) error) (engine.Result, error) {
+func (s *server) generate(ctx context.Context, j job, begin func(), onText func(piece string, thinking bool) error, onTools func([]toolCall) error) (engine.Result, error) {
 	if err := s.queue.acquire(ctx); err != nil {
 		return engine.Result{}, err
 	}
@@ -129,12 +137,25 @@ func (s *server) generate(ctx context.Context, j job, begin func(), onText func(
 	defer cancel()
 	detok := s.deps.Tokenizer.NewDetokenizer()
 	matcher := newStopMatcher(j.stop)
-	emit := func(piece string) error { return onText(piece, false) }
+	var toolText toolOutput
+	emitText := onText
+	if j.tools != nil {
+		emitText = func(piece string, reasoning bool) error {
+			if reasoning {
+				return onText(piece, true)
+			}
+			return toolText.add(piece, onText)
+		}
+	}
+	emit := func(piece string) error { return emitText(piece, false) }
 	var thinking thinkingSplitter
 	splitThinking := j.chat && s.deps.ThinkingTokens != nil
 	if splitThinking {
 		thinking.reasoning = s.deps.ThinkingTokens.startsInReasoning(prompt)
-		emit = func(piece string) error { return thinking.add(piece, onText) }
+		if j.tools != nil {
+			thinking.literal = &toolText.started
+		}
+		emit = func(piece string) error { return thinking.add(piece, emitText) }
 	}
 	var (
 		stopped bool  // a stop string was completed
@@ -162,7 +183,7 @@ func (s *server) generate(ctx context.Context, j job, begin func(), onText func(
 			sinkErr = emit(rest)
 		}
 		if splitThinking && res.FinishReason == "length" && !stopped && sinkErr == nil {
-			sinkErr = thinking.flush(onText)
+			sinkErr = thinking.flush(emitText)
 		}
 	}
 	switch {
@@ -170,7 +191,17 @@ func (s *server) generate(ctx context.Context, j job, begin func(), onText func(
 		return res, sinkErr
 	case stopped:
 		res.FinishReason = "stop"
-		return res, nil
+		err = nil
+	}
+	if err == nil && j.tools != nil {
+		calls, parseErr := toolText.finish(j.tools, res.FinishReason == "length", onText)
+		if parseErr != nil {
+			return res, parseErr
+		}
+		if len(calls) != 0 {
+			res.FinishReason = "tool_calls"
+			return res, onTools(calls)
+		}
 	}
 	return res, err
 }

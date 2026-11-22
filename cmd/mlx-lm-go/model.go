@@ -61,8 +61,7 @@ var loadEngine = func(dir string, opts generate.Options) (modelEngine, error) {
 // loadEngine loads the weights of m. The caller must Close the engine. The
 // tokenizer's end-of-sequence token ends a generation when config.json names
 // none.
-func (m *model) loadEngine(prefillStepSize int) (modelEngine, error) {
-	opts := generate.Options{PrefillStepSize: prefillStepSize}
+func (m *model) loadEngine(opts generate.Options) (modelEngine, error) {
 	if _, id, ok := m.tokenizer.EOSToken(); ok {
 		opts.EOSTokenIDs = []int32{id}
 	}

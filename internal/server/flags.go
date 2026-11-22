@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -28,12 +29,13 @@ func newFlagSet() *flagSet {
 	f := &flagSet{
 		FlagSet: flag.NewFlagSet("mlx-lm-go", flag.ContinueOnError),
 		cfg: Config{
-			Host:            "127.0.0.1",
-			Port:            8080,
-			LogLevel:        "INFO",
-			TopP:            1.0,
-			MaxTokens:       512,
-			PrefillStepSize: 2048,
+			Host:             "127.0.0.1",
+			Port:             8080,
+			LogLevel:         "INFO",
+			TopP:             1.0,
+			MaxTokens:        512,
+			PrefillStepSize:  2048,
+			PromptCacheBytes: 1_000_000_000,
 		},
 		templateArgs: "{}",
 	}
@@ -55,6 +57,8 @@ func newFlagSet() *flagSet {
 	fs.Var((*float32Value)(&cfg.MinP), "min-p", "default min-p sampling, 0 disables it")
 	fs.IntVar(&cfg.MaxTokens, "max-tokens", cfg.MaxTokens, "default maximum number of tokens to generate")
 	fs.IntVar(&cfg.PrefillStepSize, "prefill-step-size", cfg.PrefillStepSize, "number of prompt tokens processed per step")
+	fs.IntVar(&cfg.PromptCacheSize, "prompt-cache-size", cfg.PromptCacheSize, "maximum retained prefix snapshots (0 disables caching)")
+	fs.Var((*byteSizeValue)(&cfg.PromptCacheBytes), "prompt-cache-bytes", "maximum retained tensor bytes (bytes, MB or GB; 0 disables caching)")
 	f.unsupported = rejectUnsupported(fs)
 	return f
 }
@@ -77,6 +81,8 @@ func ParseFlags(args []string) (Config, error) {
 		return Config{}, errors.New("--model is required")
 	case !slices.Contains(logLevels, cfg.LogLevel):
 		return Config{}, fmt.Errorf("--log-level must be one of %s", strings.Join(logLevels, ", "))
+	case cfg.PromptCacheSize < 0:
+		return Config{}, errors.New("--prompt-cache-size must be non-negative")
 	case !isJSONObject(cfg.ChatTemplateArgs):
 		return Config{}, errors.New("--chat-template-args must be a JSON object")
 	}
@@ -141,12 +147,42 @@ func (f *float32Value) String() string {
 	return strconv.FormatFloat(float64(*f), 'g', -1, 32)
 }
 
+type byteSizeValue uint64
+
+func (v *byteSizeValue) Set(text string) error {
+	text = strings.ToUpper(strings.TrimSpace(text))
+	i := strings.IndexFunc(text, func(r rune) bool { return (r < '0' || r > '9') && r != '.' })
+	if i == -1 {
+		i = len(text)
+	}
+	unit := strings.TrimSpace(text[i:])
+	var multiplier float64
+	switch unit {
+	case "":
+		multiplier = 1
+	case "M", "MB":
+		multiplier = 1e6
+	case "G", "GB":
+		multiplier = 1e9
+	}
+	n, err := strconv.ParseFloat(text[:i], 64)
+	if n *= multiplier; err != nil || multiplier == 0 || n >= math.Exp2(64) {
+		return fmt.Errorf("expected a non-negative size in bytes, MB or GB")
+	}
+	*v = byteSizeValue(n)
+	return nil
+}
+
+func (v *byteSizeValue) String() string {
+	return strconv.FormatUint(uint64(*v), 10)
+}
+
 // Flags of mlx_lm.server that this server recognises only to reject them with
 // a clear message. Switches take no value.
 var (
 	unsupportedValueFlags = []string{
 		"adapter-path", "draft-model", "num-draft-tokens", "decode-concurrency",
-		"prompt-concurrency", "prompt-cache-size", "prompt-cache-bytes",
+		"prompt-concurrency",
 	}
 	unsupportedSwitches = []string{"trust-remote-code", "use-default-chat-template", "pipeline"}
 )

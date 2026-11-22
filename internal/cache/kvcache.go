@@ -37,6 +37,14 @@ func (c *KVCache) Free() {
 	*c = KVCache{}
 }
 
+// Clone keeps independent handles to the cache buffers without copying them.
+func (c *KVCache) Clone() KVCache {
+	if c.keys == nil {
+		return KVCache{}
+	}
+	return KVCache{keys: c.keys.Share(), values: c.values.Share(), offset: c.offset}
+}
+
 // UpdateAndFetch appends the keys and values of new positions, each of shape
 // [B, heads, L, dims], and returns those of all positions so far. The cache
 // keeps ownership of what it returns.
